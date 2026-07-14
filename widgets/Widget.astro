@@ -1,0 +1,10 @@
+---
+// "Websites" dashboard widget shell. Renders the card chrome + a hydrated island
+// that fetches /cms/summary. Rendered by the Dashboard host via virtual:panel-widgets.
+import ManagedSitesCount from "../islands/WidgetBody.tsx";
+---
+
+<article class="widget widget--website-cms">
+  <h3>Websites</h3>
+  <ManagedSitesCount client:load />
+</article>

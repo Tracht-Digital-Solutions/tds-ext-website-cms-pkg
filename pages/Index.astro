@@ -1,0 +1,11 @@
+---
+// Website-CMS page, injected into the host build via the manifest's route slot.
+// Checkpoint-1: the managed-sites list + add-site form. The per-section block
+// editor (structured forms + rebuild trigger) lands in the next checkpoint.
+import SitesList from "../islands/SitesList.tsx";
+---
+
+<section class="page page--website-cms">
+  <h1>Website-CMS</h1>
+  <SitesList client:load />
+</section>
