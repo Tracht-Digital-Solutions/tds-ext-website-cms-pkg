@@ -86,14 +86,15 @@ export default function SitesList() {
 }
 
 // --- structured section forms ----------------------------------------------
-// Known section shapes render typed fields (with repeatable item lists) instead
-// of raw JSON. Anything not here falls back to the JSON editor, and a Form/JSON
-// toggle is always available. Add a section here to give it a structured form.
-type LeafType = "text" | "textarea";
-type ItemField = { key: string; label: string; type: LeafType };
-type Field =
-  | { key: string; label: string; type: LeafType }
-  | { key: string; label: string; type: "list"; itemLabel: string; itemFields: ItemField[] };
+// Known section shapes render typed fields (text/textarea/number/checkbox,
+// repeatable object lists, and string lists) instead of raw JSON. Anything not
+// here falls back to the JSON editor, and a Form/JSON toggle is always available.
+// Add a section here to give it a structured form.
+type LeafType = "text" | "textarea" | "number" | "checkbox";
+type LeafField = { key: string; label: string; type: LeafType };
+type StringListField = { key: string; label: string; type: "stringlist"; itemLabel: string };
+type ObjectListField = { key: string; label: string; type: "list"; itemLabel: string; itemFields: (LeafField | StringListField)[] };
+type Field = LeafField | StringListField | ObjectListField;
 
 // Shapes match the tds-landingpage section defaults (the primary consumer). A
 // structured form only renders the fields listed here; any other keys in the
@@ -164,46 +165,130 @@ const SECTION_SCHEMAS: Record<string, Field[]> = {
       { key: "outcome", label: "Ergebnis", type: "textarea" },
     ] },
   ],
+  consulting: [
+    { key: "label", label: "Label", type: "text" },
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "body", label: "Text", type: "textarea" },
+    { key: "primaryCta", label: "Button (primär)", type: "text" },
+    { key: "secondaryCta", label: "Button (sekundär)", type: "text" },
+  ],
+  footer: [
+    { key: "slogan", label: "Slogan", type: "text" },
+    { key: "tagline", label: "Tagline", type: "text" },
+    { key: "nav", label: "Navigation-Titel", type: "text" },
+    { key: "contactTitle", label: "Kontakt-Titel", type: "text" },
+    { key: "copyright", label: "Copyright", type: "text" },
+    { key: "impressum", label: "Impressum-Label", type: "text" },
+    { key: "datenschutz", label: "Datenschutz-Label", type: "text" },
+    { key: "pricing", label: "Preise-Label", type: "text" },
+  ],
+  pricing: [
+    { key: "label", label: "Label", type: "text" },
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "sub", label: "Untertext", type: "textarea" },
+    { key: "teaserLabel", label: "Teaser-Label", type: "text" },
+    { key: "teaserHeadline", label: "Teaser-Überschrift", type: "text" },
+    { key: "teaserHeadlineAccent", label: "Teaser-Überschrift (Akzent)", type: "text" },
+    { key: "teaserSub", label: "Teaser-Untertext", type: "textarea" },
+    { key: "teaserCta", label: "Teaser-Button", type: "text" },
+    { key: "teaserFromLabel", label: "„ab“-Label", type: "text" },
+    { key: "hourSuffix", label: "Stunden-Suffix", type: "text" },
+    { key: "includesLabel", label: "„Beinhaltet“-Label", type: "text" },
+    { key: "items", label: "Pakete", type: "list", itemLabel: "Paket", itemFields: [
+      { key: "title", label: "Titel", type: "text" },
+      { key: "rate", label: "Stundensatz (€)", type: "number" },
+      { key: "description", label: "Beschreibung", type: "textarea" },
+      { key: "includes", label: "Beinhaltet", type: "stringlist", itemLabel: "Punkt" },
+      { key: "highlight", label: "Hervorheben", type: "checkbox" },
+    ] },
+    { key: "notesTitle", label: "Hinweise-Titel", type: "text" },
+    { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
+    { key: "ctaTitle", label: "CTA-Titel", type: "text" },
+    { key: "ctaSub", label: "CTA-Untertext", type: "textarea" },
+    { key: "ctaButton", label: "CTA-Button", type: "text" },
+    { key: "back", label: "Zurück-Label", type: "text" },
+  ],
 };
 
 type Obj = Record<string, unknown>;
 
-function LeafInput({ type, value, onChange }: { type: LeafType; value: string; onChange: (v: string) => void }) {
-  return type === "textarea" ? (
-    <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} />
-  ) : (
-    <input value={value} onChange={(e) => onChange(e.target.value)} />
+/** A single typed leaf input; emits the correctly-typed value (string/number/bool). */
+function LeafInput({ field, value, onChange }: { field: LeafField; value: unknown; onChange: (v: unknown) => void }) {
+  if (field.type === "checkbox") {
+    return <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
+  }
+  if (field.type === "number") {
+    return (
+      <input
+        type="number"
+        value={value === undefined || value === null || value === "" ? "" : String(value)}
+        onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
+      />
+    );
+  }
+  if (field.type === "textarea") {
+    return <textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} rows={3} />;
+  }
+  return <input value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
+}
+
+/** Editor for an array of plain strings (e.g. pricing `includes` / `notes`). */
+function StringListEditor({ field, items, onChange }: { field: StringListField; items: string[]; onChange: (v: string[]) => void }) {
+  return (
+    <div className="cms-form__stringlist">
+      <div className="flex items-center justify-between">
+        <span className="text-sm">{field.label}</span>
+        <button type="button" className="text-xs" onClick={() => onChange([...items, ""])}>+ {field.itemLabel}</button>
+      </div>
+      {items.map((s, i) => (
+        <div key={i} className="flex gap-2">
+          <input value={s} onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))} />
+          <button type="button" className="danger text-xs" onClick={() => onChange(items.filter((_, idx) => idx !== i))}>×</button>
+        </div>
+      ))}
+    </div>
   );
 }
 
-function ListEditor({
-  field,
-  items,
-  onChange,
-}: {
-  field: Extract<Field, { type: "list" }>;
-  items: Obj[];
-  onChange: (items: Obj[]) => void;
-}) {
-  const update = (i: number, key: string, v: string) =>
+/** Render one field (leaf / string-list / object-list) bound to `value[field.key]`. */
+function FieldEditor({ field, value, onChange }: { field: LeafField | StringListField; value: unknown; onChange: (v: unknown) => void }) {
+  if (field.type === "stringlist") {
+    return (
+      <StringListEditor
+        field={field}
+        items={Array.isArray(value) ? (value as unknown[]).map((v) => String(v ?? "")) : []}
+        onChange={(items) => onChange(items)}
+      />
+    );
+  }
+  return (
+    <label className="block text-sm">
+      {field.label}
+      <LeafInput field={field} value={value} onChange={onChange} />
+    </label>
+  );
+}
+
+function ListEditor({ field, items, onChange }: { field: ObjectListField; items: Obj[]; onChange: (items: Obj[]) => void }) {
+  const update = (i: number, key: string, v: unknown) =>
     onChange(items.map((it, idx) => (idx === i ? { ...it, [key]: v } : it)));
-  const add = () => onChange([...items, Object.fromEntries(field.itemFields.map((f) => [f.key, ""]))]);
+  const blank = (): Obj =>
+    Object.fromEntries(field.itemFields.map((f) => [f.key, f.type === "stringlist" ? [] : f.type === "checkbox" ? false : ""]));
   const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
 
   return (
     <div className="cms-form__list">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">{field.label}</span>
-        <button type="button" className="text-xs" onClick={add}>+ {field.itemLabel}</button>
+        <button type="button" className="text-xs" onClick={() => onChange([...items, blank()])}>+ {field.itemLabel}</button>
       </div>
       {items.length === 0 ? <p className="text-xs opacity-60">Noch keine Einträge.</p> : null}
       {items.map((it, i) => (
         <div key={i} className="cms-form__item rounded-lg border border-[color:var(--color-border)] p-3 space-y-2">
           {field.itemFields.map((f) => (
-            <label key={f.key} className="block text-sm">
-              {f.label}
-              <LeafInput type={f.type} value={String(it[f.key] ?? "")} onChange={(v) => update(i, f.key, v)} />
-            </label>
+            <FieldEditor key={f.key} field={f} value={it[f.key]} onChange={(v) => update(i, f.key, v)} />
           ))}
           <button type="button" className="danger text-xs" onClick={() => remove(i)}>Eintrag entfernen</button>
         </div>
@@ -225,10 +310,7 @@ function StructuredForm({ schema, value, onChange }: { schema: Field[]; value: O
             onChange={(items) => setField(f.key, items)}
           />
         ) : (
-          <label key={f.key} className="block text-sm">
-            {f.label}
-            <LeafInput type={f.type} value={String(value[f.key] ?? "")} onChange={(v) => setField(f.key, v)} />
-          </label>
+          <FieldEditor key={f.key} field={f} value={value[f.key]} onChange={(v) => setField(f.key, v)} />
         ),
       )}
     </div>

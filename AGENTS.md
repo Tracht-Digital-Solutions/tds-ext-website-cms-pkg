@@ -83,8 +83,16 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   `{number,title,duration,description,detail,outcome}`). Partial schemas stay safe —
   unlisted keys are preserved. When adding a section, copy its shape from the
   landingpage component's `cmsFor("<key>", …, {…default…})` call.
-- **TODO (next):** pricing/consulting/footer (their defaults are whole tds-shared
-  translation objects — confirm the exact shape before adding).
+- **CP8:** added `consulting`, `footer`, and `pricing` schemas — **all landingpage
+  sections now have structured forms.** `pricing` needed richer field types, so the
+  form system grew `number` + `checkbox` leaf types and a `stringlist` field (array
+  of plain strings, e.g. pricing `includes`/`notes`) — usable both top-level and as
+  an item field inside an object list (pricing `items[].includes`). `LeafInput` now
+  emits the correctly-typed value (string/number/bool) and `blank()` seeds new list
+  items per field type. Shapes verified against tds-shared `translations.ts`
+  (`t.pricing`/`t.consulting`/`t.footer`).
+- **TODO (next):** nothing outstanding for the structured forms — extend
+  `SECTION_SCHEMAS` if a site introduces a new section shape.
 
 ## After a change
 
