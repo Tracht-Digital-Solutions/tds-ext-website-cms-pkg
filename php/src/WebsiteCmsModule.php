@@ -84,6 +84,26 @@ final class WebsiteCmsModule extends AbstractModule
             });
         }
 
+        // --- Public read surface (UNAUTHENTICATED) --------------------------
+        // The successor to tds-content-api's open `GET /content/landing` that the
+        // public landingpage + blog SSG builds fetch at build time (landing
+        // sections, plus the blog's cookie_banner + ads config blocks). Serves
+        // the single default site's blocks for a language as a section→value map.
+        // The ONLY ungated route in this module; keep it read-only.
+        $app->get('/content/landing', function (Request $req, Response $res) use ($c): Response {
+            // Graceful for a build-fetch: any DB hiccup returns no blocks so the
+            // public build falls back to its baked defaults, never a 500.
+            try {
+                $repo = $c->get(CmsRepository::class);
+                $site = $repo->defaultSite();
+                $lang = self::lang($req->getQueryParams()['lang'] ?? null);
+                $blocks = $site === null ? [] : $repo->publicBlocks((int) $site['id'], $lang);
+                return self::json($res, ['blocks' => (object) $blocks]);
+            } catch (\Throwable) {
+                return self::json($res, ['blocks' => (object) []]);
+            }
+        });
+
         $app->get('/cms/summary', function (Request $req, Response $res) use ($c): Response {
             if (($deny = self::require($c->get(UserContext::class), 'website:read', $res)) !== null) {
                 return $deny;

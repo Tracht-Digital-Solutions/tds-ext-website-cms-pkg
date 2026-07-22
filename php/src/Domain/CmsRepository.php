@@ -79,6 +79,39 @@ final class CmsRepository
         return $stmt->fetchAll();
     }
 
+    // --- Public (unauthenticated) read surface ------------------------------
+    // Serves the editable content blocks the public landingpage/blog SSG builds
+    // fetch (the successor to tds-content-api's open `GET /content/landing`).
+
+    /** The site the public landingpage maps to (single-site): first by name/id. */
+    public function defaultSite(): ?array
+    {
+        $row = $this->pdo->query(
+            'SELECT id, site_key, name FROM cms_site ORDER BY name, id LIMIT 1'
+        )->fetch();
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * All of a site's blocks for one language as a `section_key => value` map
+     * (value = the decoded `value_json` content object) — the shape the public
+     * landingpage/blog expect from `GET /content/landing`.
+     *
+     * @return array<string,mixed>
+     */
+    public function publicBlocks(int $siteId, string $lang): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT section_key, value_json FROM cms_block WHERE site_id = :s AND lang = :l'
+        );
+        $stmt->execute([':s' => $siteId, ':l' => $lang]);
+        $out = [];
+        foreach ($stmt->fetchAll() as $row) {
+            $out[(string) $row['section_key']] = json_decode((string) $row['value_json'], true);
+        }
+        return $out;
+    }
+
     /** @return mixed the decoded value_json, or null when absent */
     public function getBlock(int $siteId, string $sectionKey, string $lang): mixed
     {

@@ -18,6 +18,13 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 
 ## Gotchas
 
+- **Public read surface (UNAUTHENTICATED).** Alongside the admin (`website:read`/
+  `website:write`) routes, this module serves the successor to tds-content-api's
+  open `GET /content/landing` that the public landingpage + blog SSG builds fetch:
+  it returns the **default site**'s (`defaultSite()`) content blocks for a language
+  as a `{blocks: {section_key: value}}` map (landing sections + the blog's
+  `cookie_banner`/`ads` config blocks). **Degrades to `{blocks:{}}` on any DB
+  error** (build-fetch fail-safe) — keep it read-only and ungated.
 - Migration class names are **module-prefixed** (`WebsiteCms*`) AND the numeric
   **version prefixes are globally unique** (this module owns the `20260727*`
   band) — every composed module's migrations share one `phinxlog`, so a reused
