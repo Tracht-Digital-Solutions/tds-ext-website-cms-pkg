@@ -1,12 +1,12 @@
 # tds-ext-website-cms-pkg
 
-The **Website-CMS** as a panel extension, ported from `tds-content-api`'s
+The **Website-CMS** as a frontend extension, ported from `tds-content-api`'s
 `/landing` content-block model. It edits the **editable sections of the public
 sites**, stored as one JSON block per **site × section × language**; the static
 sites fetch these at build time and merge them over their tds-shared-pkg / local
 defaults (a missing block falls back to the default).
 
-**1:n sites:** a `cms_site` registry lets one panel manage several websites;
+**1:n sites:** a `cms_site` registry lets one frontend manage several websites;
 blocks are scoped to a site.
 
 ## Surface (checkpoint-1)
@@ -31,13 +31,13 @@ DeepL auto-translation of blocks (as content-api's TranslationSync does).
 ## Develop
 
 ```bash
-npm install        # pulls tds-panel-contract from GitHub Packages (needs NPM_TOKEN)
+npm install        # pulls tds-frontend-contract from GitHub Packages (needs NPM_TOKEN)
 npm run build && npm run type-check
-composer install   # resolves tds-panel-contract from its public VCS repo
+composer install   # resolves tds-frontend-contract from its public VCS repo
 composer test      # phpunit — route/RBAC coverage; DB-backed tests skip without TDS_TEST_DB_DSN
 ```
 
 ## Enable it
 
-Host `astro.config.mjs`: add the manifest to `panelHost({ extensions: [...] })`.
+Host `astro.config.mjs`: add the manifest to `frontendHost({ extensions: [...] })`.
 Base API: add `new WebsiteCmsModule()` to `Modules::enabled()`.

@@ -1,7 +1,7 @@
 # AGENTS.md — tds-ext-website-cms-pkg
 
 Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
-`tds-panel-contract-pkg` + `tds-core-panel-api` AGENTS first.
+`tds-frontend-contract-pkg` + `tds-core-frontend-api` AGENTS first.
 
 ## Model
 

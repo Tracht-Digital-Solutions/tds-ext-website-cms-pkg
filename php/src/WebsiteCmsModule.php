@@ -12,10 +12,10 @@ use Tds\Ext\WebsiteCms\Service\DeeplTranslator;
 use Tds\Ext\WebsiteCms\Service\RebuildTrigger;
 use Tds\Ext\WebsiteCms\Service\TranslatableJsonWalker;
 use Tds\Ext\WebsiteCms\Service\TranslationSync;
-use Tds\Panel\Contract\AbstractModule;
-use Tds\Panel\Contract\PermissionDef;
-use Tds\Panel\Contract\SettingsStore;
-use Tds\Panel\Contract\UserContext;
+use Tds\Frontend\Contract\AbstractModule;
+use Tds\Frontend\Contract\PermissionDef;
+use Tds\Frontend\Contract\SettingsStore;
+use Tds\Frontend\Contract\UserContext;
 
 /**
  * Backend Module for the Website-CMS (checkpoint-1: site registry + per-(site,
