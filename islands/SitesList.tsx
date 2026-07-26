@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Spinner } from "@tracht-digital-solutions/tds-shared/components";
 
 interface Site {
   id: number;
@@ -67,7 +68,7 @@ export default function SitesList() {
       </form>
 
       {sites === null ? (
-        <p>Wird geladen …</p>
+        <p role="status"><Spinner /></p>
       ) : sites.length === 0 ? (
         <p>Noch keine Websites angelegt.</p>
       ) : (
@@ -245,7 +246,7 @@ function StringListEditor({ field, items, onChange }: { field: StringListField; 
       {items.map((s, i) => (
         <div key={i} className="flex gap-2">
           <input value={s} onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))} />
-          <button type="button" className="danger text-xs" onClick={() => onChange(items.filter((_, idx) => idx !== i))}>×</button>
+          <button type="button" className="btn btn-danger text-xs" onClick={() => onChange(items.filter((_, idx) => idx !== i))}>×</button>
         </div>
       ))}
     </div>
@@ -290,7 +291,7 @@ function ListEditor({ field, items, onChange }: { field: ObjectListField; items:
           {field.itemFields.map((f) => (
             <FieldEditor key={f.key} field={f} value={it[f.key]} onChange={(v) => update(i, f.key, v)} />
           ))}
-          <button type="button" className="danger text-xs" onClick={() => remove(i)}>Eintrag entfernen</button>
+          <button type="button" className="btn btn-danger text-xs" onClick={() => remove(i)}>Eintrag entfernen</button>
         </div>
       ))}
     </div>
@@ -451,7 +452,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
       <div className="cms-editor__blocks">
         <h3>Sektionen</h3>
         {blocks === null ? (
-          <p>Wird geladen …</p>
+          <p role="status"><Spinner /></p>
         ) : blocks.length === 0 ? (
           <p>Noch keine Blöcke.</p>
         ) : (
@@ -497,7 +498,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
             spellCheck={false}
           />
         )}
-        {status ? <p className="status-pill status-pill--info">{status}</p> : null}
+        {status ? <p className="tds-alert" role="status">{status}</p> : null}
         <button type="button" onClick={save}>Speichern</button>
       </div>
 
@@ -508,7 +509,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           serverseitig via <code>WEBSITE_DEEPL_API_KEY</code>). Vorhandene Blöcke lassen
           sich hier nachziehen.
         </p>
-        {backfillStatus ? <p className="status-pill status-pill--info">{backfillStatus}</p> : null}
+        {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
         <button type="button" onClick={backfill}>Übersetzungen nachziehen</button>
       </div>
 
@@ -530,7 +531,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
             placeholder="dev.yml"
           />
         </div>
-        {rebuildStatus ? <p className="status-pill status-pill--info">{rebuildStatus}</p> : null}
+        {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
         <div className="flex gap-2">
           <button type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
           <button type="button" onClick={rebuildNow}>Jetzt neu bauen</button>

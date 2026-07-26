@@ -16,5 +16,5 @@ export default function ManagedSitesCount() {
       alive = false;
     };
   }, []);
-  return <p className="widget__metric">{sites === null ? "…" : sites}</p>;
+  return <p className="tds-widget__metric">{sites === null ? "…" : sites}</p>;
 }
