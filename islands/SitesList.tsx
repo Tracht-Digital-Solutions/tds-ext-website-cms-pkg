@@ -61,7 +61,7 @@ export default function SitesList() {
 
   return (
     <div className="cms-sites">
-      <form className="cms-sites__form" onSubmit={(e) => { e.preventDefault(); create(); }}>
+      <form className="tds-stack" onSubmit={(e) => { e.preventDefault(); create(); }}>
         <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="site-key (kebab)" required />
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
         <button type="submit">Website hinzufügen</button>
@@ -72,7 +72,7 @@ export default function SitesList() {
       ) : sites.length === 0 ? (
         <p>Noch keine Websites angelegt.</p>
       ) : (
-        <ul className="cms-sites__list">
+        <ul className="tds-list">
           {sites.map((s) => (
             <li key={s.id}>
               <button type="button" onClick={() => setSelected(s)}>
@@ -280,14 +280,14 @@ function ListEditor({ field, items, onChange }: { field: ObjectListField; items:
   const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
 
   return (
-    <div className="cms-form__list">
+    <div className="tds-stack">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">{field.label}</span>
         <button type="button" className="text-xs" onClick={() => onChange([...items, blank()])}>+ {field.itemLabel}</button>
       </div>
       {items.length === 0 ? <p className="text-xs opacity-60">Noch keine Einträge.</p> : null}
       {items.map((it, i) => (
-        <div key={i} className="cms-form__item rounded-lg border border-[color:var(--color-border)] p-3 space-y-2">
+        <div key={i} className="tds-card tds-stack tds-stack--tight p-3">
           {field.itemFields.map((f) => (
             <FieldEditor key={f.key} field={f} value={it[f.key]} onChange={(v) => update(i, f.key, v)} />
           ))}
@@ -471,7 +471,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
         )}
       </div>
 
-      <div className="cms-editor__form">
+      <div className="tds-stack">
         <div className="flex items-center justify-between">
           <h3>Block bearbeiten</h3>
           {SECTION_SCHEMAS[sectionKey] ? (
@@ -504,7 +504,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
 
       <div className="cms-editor__translate">
         <h3>Automatische Übersetzung</h3>
-        <p className="cms-editor__hint">
+        <p className="marginalia">
           Beim Speichern eines Blocks wird die Gegensprache per DeepL erzeugt (Schlüssel
           serverseitig via <code>WEBSITE_DEEPL_API_KEY</code>). Vorhandene Blöcke lassen
           sich hier nachziehen.
@@ -515,7 +515,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
 
       <div className="cms-editor__rebuild">
         <h3>Rebuild-Konfiguration</h3>
-        <p className="cms-editor__hint">
+        <p className="marginalia">
           Repository (<code>owner/name</code>) und Workflow-Datei, die ein Speichern neu baut.
           Der Token wird serverseitig über <code>WEBSITE_REBUILD_TOKEN</code> bereitgestellt.
         </p>
