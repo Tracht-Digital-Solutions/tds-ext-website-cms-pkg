@@ -33,6 +33,36 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   at request time (UserContext is rebound per request by the core AuthMiddleware).
 - DB-backed tests skip without `TDS_TEST_DB_DSN`; the committed test covers
   routes + RBAC + payload validation without a DB.
+- **The structured form MUST spread, never replace.** `SECTION_SCHEMAS` lists a
+  SUBSET of a block's keys; the public sites merge the whole block over their
+  defaults. `StructuredForm`'s `setField` and `ListEditor`'s per-item update both
+  spread (`{ ...value, [key]: v }`) so keys the schema does not know about
+  survive an edit. Replacing instead of spreading silently blanks live landing
+  page content on the next save — covered by two tests that fail on exactly that
+  mutation.
+
+## Tests
+
+`npm run test:run` (vitest; jsdom per-file via a `@vitest-environment` docblock).
+
+- `islands/SitesList.test.tsx` — the site/block CRUD and, above all, the
+  **structured-form ↔ raw-JSON bridge**: unknown keys survive a form edit,
+  `currentValue()` refuses arrays/scalars/null so a block is always an object,
+  typed fields round-trip (number stays a number, a cleared number becomes
+  `null`, a checkbox stays boolean), and a hand-broken stored value (`null`,
+  an array, a non-object) degrades instead of white-screening the editor.
+- `islands/WebsiteSettings.test.tsx` — the masked-secret contract: a secret
+  never round-trips to the DOM, and a **blank** secret on save means *keep*, so
+  toggling auto-translate cannot wipe the DeepL key.
+- `src/index.test.ts` + `tests/packaging.test.ts` — the manifest as a product
+  build sees it, and that every specifier resolves to a real file that is both
+  covered by `exports` and inside the published `files` list.
+
+Note: `userEvent.type()` parses `{` and `[` as key syntax, so the JSON textarea
+is driven with `paste()` (see the `setJson` helper) — typing raw JSON silently
+fails.
+
+Verified by mutation: 16 deliberate breakages introduced, 16 caught.
 
 ## Checkpoint status
 
