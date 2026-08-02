@@ -5,9 +5,14 @@
 // auto-translate flag, and the rebuild token — DB-first, env fallback in the
 // backend. Secrets are stored AES-256-GCM-encrypted by the core.
 import WebsiteSettings from "./WebsiteSettings.tsx";
+// HYDRATION: `client:visible`, not `client:load`. /einstellungen stacks seven
+// settings panels vertically and all but the first are below the fold; eager
+// hydration fired seven islands and seven settings fetches on load. The page
+// content islands (pages/*.astro) stay `client:load` on purpose — those ARE
+// the reason the user navigated.
 ---
 
 <div class="tds-settings-section__body">
   <h3>Website-CMS</h3>
-  <WebsiteSettings client:load />
+  <WebsiteSettings client:visible />
 </div>
