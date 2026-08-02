@@ -76,7 +76,7 @@ export default function WebsiteSettings() {
   const secretHint = (s: Masked | null) =>
     s?.configured ? `konfiguriert (…${s.last4 ?? "????"})` : "nicht konfiguriert";
 
-  if (!loaded) return <p role="status"><Spinner /></p>;
+  if (!loaded) return <p><Spinner /></p>;
 
   return (
     <div className="website-settings space-y-4">

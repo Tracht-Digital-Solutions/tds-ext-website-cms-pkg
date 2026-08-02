@@ -68,7 +68,7 @@ export default function SitesList() {
       </form>
 
       {sites === null ? (
-        <p role="status"><Spinner /></p>
+        <p><Spinner /></p>
       ) : sites.length === 0 ? (
         <p>Noch keine Websites angelegt.</p>
       ) : (
@@ -452,7 +452,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
       <div className="cms-editor__blocks">
         <h3>Sektionen</h3>
         {blocks === null ? (
-          <p role="status"><Spinner /></p>
+          <p><Spinner /></p>
         ) : blocks.length === 0 ? (
           <p>Noch keine Blöcke.</p>
         ) : (

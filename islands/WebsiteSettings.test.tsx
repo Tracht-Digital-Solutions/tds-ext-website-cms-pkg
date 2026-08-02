@@ -126,7 +126,7 @@ describe("loading", () => {
     // Otherwise the section renders a permanent spinner.
     getResponse = { status: 500, body: {} };
     await renderSettings();
-    await waitFor(() => expect(screen.queryByText("Wird geladen …")).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText("Wird geladen")).toBeNull());
   });
 });
 

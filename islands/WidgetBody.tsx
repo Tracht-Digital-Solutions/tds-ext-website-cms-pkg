@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Skeleton } from "@tracht-digital-solutions/tds-shared/components";
 
 /**
  * "Websites" widget body — the count of managed sites, from the manifest's
@@ -16,5 +17,7 @@ export default function ManagedSitesCount() {
       alive = false;
     };
   }, []);
-  return <p className="tds-widget__metric">{sites === null ? "…" : sites}</p>;
+  return <p className="tds-widget__metric" aria-busy={sites === null}>
+      {sites === null ? <Skeleton width="3ch" height="1.75rem" /> : sites}
+    </p>;
 }
