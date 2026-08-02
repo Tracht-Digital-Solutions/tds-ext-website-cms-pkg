@@ -62,9 +62,9 @@ export default function SitesList() {
   return (
     <div className="cms-sites">
       <form className="tds-stack" onSubmit={(e) => { e.preventDefault(); create(); }}>
-        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="site-key (kebab)" required />
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
-        <button type="submit">Website hinzufügen</button>
+        <input className="field-boxed" value={key} onChange={(e) => setKey(e.target.value)} placeholder="site-key (kebab)" required />
+        <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
+        <button className="btn btn-primary" type="submit">Website hinzufügen</button>
       </form>
 
       {sites === null ? (
@@ -75,7 +75,7 @@ export default function SitesList() {
         <ul className="tds-list">
           {sites.map((s) => (
             <li key={s.id}>
-              <button type="button" onClick={() => setSelected(s)}>
+              <button className="btn btn-ghost" type="button" onClick={() => setSelected(s)}>
                 <strong>{s.name}</strong> <code>{s.site_key}</code>
               </button>
             </li>
@@ -222,7 +222,7 @@ function LeafInput({ field, value, onChange }: { field: LeafField; value: unknow
   }
   if (field.type === "number") {
     return (
-      <input
+      <input className="field-boxed"
         type="number"
         value={value === undefined || value === null || value === "" ? "" : String(value)}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
@@ -230,9 +230,9 @@ function LeafInput({ field, value, onChange }: { field: LeafField; value: unknow
     );
   }
   if (field.type === "textarea") {
-    return <textarea value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} rows={3} />;
+    return <textarea className="field-boxed" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} rows={3} />;
   }
-  return <input value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
+  return <input className="field-boxed" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
 }
 
 /** Editor for an array of plain strings (e.g. pricing `includes` / `notes`). */
@@ -241,11 +241,11 @@ function StringListEditor({ field, items, onChange }: { field: StringListField; 
     <div className="cms-form__stringlist">
       <div className="flex items-center justify-between">
         <span className="text-sm">{field.label}</span>
-        <button type="button" className="text-xs" onClick={() => onChange([...items, ""])}>+ {field.itemLabel}</button>
+        <button type="button" className="btn btn-ghost text-xs" onClick={() => onChange([...items, ""])}>+ {field.itemLabel}</button>
       </div>
       {items.map((s, i) => (
         <div key={i} className="flex gap-2">
-          <input value={s} onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))} />
+          <input className="field-boxed" value={s} onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))} />
           <button type="button" className="btn btn-danger text-xs" onClick={() => onChange(items.filter((_, idx) => idx !== i))}>×</button>
         </div>
       ))}
@@ -283,7 +283,7 @@ function ListEditor({ field, items, onChange }: { field: ObjectListField; items:
     <div className="tds-stack">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">{field.label}</span>
-        <button type="button" className="text-xs" onClick={() => onChange([...items, blank()])}>+ {field.itemLabel}</button>
+        <button type="button" className="btn btn-ghost text-xs" onClick={() => onChange([...items, blank()])}>+ {field.itemLabel}</button>
       </div>
       {items.length === 0 ? <p className="text-xs opacity-60">Noch keine Einträge.</p> : null}
       {items.map((it, i) => (
@@ -446,7 +446,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
 
   return (
     <div className="cms-editor">
-      <button type="button" onClick={onBack}>← Websites</button>
+      <button className="btn btn-ghost" type="button" onClick={onBack}>← Websites</button>
       <h2>{site.name}</h2>
 
       <div className="cms-editor__blocks">
@@ -459,7 +459,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           <ul>
             {blocks.map((b) => (
               <li key={`${b.section_key}-${b.lang}`}>
-                <button type="button" onClick={() => openBlock(b.section_key, b.lang)}>
+                <button className="btn btn-ghost" type="button" onClick={() => openBlock(b.section_key, b.lang)}>
                   <code>{b.section_key}</code> <span className="chip chip--neutral">{b.lang}</span>
                   {b.machine_translated ? (
                     <span className="chip chip--info" title="Automatisch übersetzt">Auto</span>
@@ -475,14 +475,14 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
         <div className="flex items-center justify-between">
           <h3>Block bearbeiten</h3>
           {SECTION_SCHEMAS[sectionKey] ? (
-            <button type="button" className="text-xs" onClick={() => (mode === "form" ? toJson() : toForm())}>
+            <button type="button" className="btn btn-ghost text-xs" onClick={() => (mode === "form" ? toJson() : toForm())}>
               {mode === "form" ? "JSON bearbeiten" : "Formular"}
             </button>
           ) : null}
         </div>
         <div className="flex gap-2">
-          <input value={sectionKey} onChange={(e) => setSection(e.target.value)} placeholder="section-key (z. B. faq)" />
-          <select value={lang} onChange={(e) => setLang(e.target.value)}>
+          <input className="field-boxed" value={sectionKey} onChange={(e) => setSection(e.target.value)} placeholder="section-key (z. B. faq)" />
+          <select className="field-boxed" value={lang} onChange={(e) => setLang(e.target.value)}>
             <option value="de">de</option>
             <option value="en">en</option>
           </select>
@@ -491,7 +491,8 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           <StructuredForm schema={SECTION_SCHEMAS[sectionKey]!} value={value} onChange={setValue} />
         ) : (
           <textarea
-            className="cms-editor__json"
+            className="field-boxed"
+            aria-label="JSON"
             value={json}
             onChange={(e) => setJson(e.target.value)}
             rows={14}
@@ -499,7 +500,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           />
         )}
         {status ? <p className="tds-alert" role="status">{status}</p> : null}
-        <button type="button" onClick={save}>Speichern</button>
+        <button className="btn btn-primary" type="button" onClick={save}>Speichern</button>
       </div>
 
       <div className="cms-editor__translate">
@@ -510,7 +511,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           sich hier nachziehen.
         </p>
         {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
-        <button type="button" onClick={backfill}>Übersetzungen nachziehen</button>
+        <button className="btn btn-primary" type="button" onClick={backfill}>Übersetzungen nachziehen</button>
       </div>
 
       <div className="cms-editor__rebuild">
@@ -520,12 +521,12 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           Der Token wird serverseitig über <code>WEBSITE_REBUILD_TOKEN</code> bereitgestellt.
         </p>
         <div className="flex gap-2">
-          <input
+          <input className="field-boxed"
             value={rebuildRepo}
             onChange={(e) => setRebuildRepo(e.target.value)}
             placeholder="Tracht-Digital-Solutions/tds-landingpage-frontend"
           />
-          <input
+          <input className="field-boxed"
             value={rebuildWorkflow}
             onChange={(e) => setRebuildWorkflow(e.target.value)}
             placeholder="dev.yml"
@@ -533,8 +534,8 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
         </div>
         {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
         <div className="flex gap-2">
-          <button type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
-          <button type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
+          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
+          <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
         </div>
       </div>
     </div>

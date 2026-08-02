@@ -69,7 +69,9 @@ async function openSite(blocks: unknown[] = []) {
   return u;
 }
 
-const jsonBox = () => document.querySelector("textarea.cms-editor__json") as HTMLTextAreaElement;
+// `query`, not `get`: one test asserts the raw editor is ABSENT while the
+// structured form is showing, and getBy* throws rather than returning null.
+const jsonBox = () => screen.queryByLabelText("JSON") as HTMLTextAreaElement;
 
 /** userEvent.type() reads { and [ as key syntax, so JSON must be pasted. */
 async function setJson(u: ReturnType<typeof user>, text: string) {

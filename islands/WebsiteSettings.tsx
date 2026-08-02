@@ -82,7 +82,7 @@ export default function WebsiteSettings() {
     <div className="website-settings space-y-4">
       <label className="block">
         <span className="text-sm">DeepL API-Key <em className="opacity-60">({secretHint(deeplState)})</em></span>
-        <input
+        <input className="field-boxed"
           type="password"
           value={deeplInput}
           onChange={(e) => setDeeplInput(e.target.value)}
@@ -98,7 +98,7 @@ export default function WebsiteSettings() {
 
       <label className="block">
         <span className="text-sm">Rebuild-Token (GitHub PAT) <em className="opacity-60">({secretHint(rebuildState)})</em></span>
-        <input
+        <input className="field-boxed"
           type="password"
           value={rebuildInput}
           onChange={(e) => setRebuildInput(e.target.value)}
@@ -108,7 +108,7 @@ export default function WebsiteSettings() {
       </label>
 
       {status ? <p className="tds-alert" role="status">{status}</p> : null}
-      <button type="button" onClick={save} disabled={busy}>Speichern</button>
+      <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Speichern</button>
     </div>
   );
 }
