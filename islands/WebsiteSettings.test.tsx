@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import WebsiteSettings from "./WebsiteSettings";
+import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 
 /**
  * The settings section talks to the core's runtime settings store
@@ -18,7 +19,15 @@ let calls: Array<{ url: string; method: string; body: unknown }> = [];
 let getResponse: { status: number; body: unknown } = { status: 200, body: { settings: [] } };
 let putStatus = 200;
 
+/** Outcomes are toasts now — collected off the `tds:toast` bus. */
+let toasts: Array<{ variant: string; message: string }> = [];
+const collectToast = (e: Event) => {
+  toasts.push((e as CustomEvent<{ variant: string; message: string }>).detail);
+};
+
 beforeEach(() => {
+  toasts = [];
+  window.addEventListener(TOAST_EVENT, collectToast);
   calls = [];
   getResponse = { status: 200, body: { settings: [] } };
   putStatus = 200;
@@ -39,7 +48,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  window.removeEventListener(TOAST_EVENT, collectToast);
+  cleanup();
+});
 
 const user = () => userEvent.setup({ delay: null });
 const NS = "/admin/settings/website-cms";
@@ -204,7 +216,7 @@ describe("saving", () => {
     await u.type(deepl!, "secret");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
 
-    expect(await screen.findByText("Gespeichert.")).toBeTruthy();
+    await waitFor(() => expect(toasts.some((t) => t.variant === "success" && t.message.includes("Gespeichert"))).toBe(true));
     expect((deepl as HTMLInputElement).value).toBe("");
     await waitFor(() => expect(calls.filter((c) => c.method === "GET")).toHaveLength(2));
   });
@@ -217,7 +229,7 @@ describe("saving", () => {
     await u.type(deepl!, "secret");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
 
-    expect(await screen.findByText("Fehler (HTTP 500).")).toBeTruthy();
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
     expect((deepl as HTMLInputElement).value).toBe("secret");
   });
 
@@ -225,7 +237,7 @@ describe("saving", () => {
     putStatus = 500;
     await renderSettings();
     await user().click(await screen.findByRole("button", { name: "Speichern" }));
-    await screen.findByText("Fehler (HTTP 500).");
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
     expect(calls.filter((c) => c.method === "GET")).toHaveLength(1);
   });
 

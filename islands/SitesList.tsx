@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Spinner } from "@tracht-digital-solutions/tds-shared/components";
+import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 
 interface Site {
   id: number;
@@ -336,12 +336,14 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
     const res = await api(`/cms/sites/${site.site_key}/translations/backfill`, { method: "POST" });
     if (res.ok) {
       const d = await res.json().catch(() => ({}));
-      setBackfillStatus(`Fertig: ${d.created ?? 0} erstellt, ${d.skipped ?? 0} übersprungen.`);
+      setBackfillStatus(null);
+      toast.success(`Fertig: ${d.created ?? 0} erstellt, ${d.skipped ?? 0} übersprungen.`);
       loadBlocks();
     } else if (res.status === 503) {
       setBackfillStatus("Automatische Übersetzung ist nicht konfiguriert (WEBSITE_DEEPL_API_KEY).");
     } else {
-      setBackfillStatus(`Fehler (HTTP ${res.status}).`);
+      setBackfillStatus(null);
+      toast.danger(`Übersetzungslauf fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -417,7 +419,8 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ value: v, lang }),
     });
-    setStatus(res.ok ? "Gespeichert (Rebuild ausgelöst, falls konfiguriert)." : `Fehler (HTTP ${res.status}).`);
+    if (res.ok) toast.success("Gespeichert (Rebuild ausgelöst, falls konfiguriert).");
+    else toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
     if (res.ok) loadBlocks();
   };
 
@@ -427,20 +430,23 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rebuild_repo: rebuildRepo.trim(), rebuild_workflow: rebuildWorkflow.trim() }),
     });
-    setRebuildStatus(res.ok ? "Rebuild-Konfiguration gespeichert." : `Fehler (HTTP ${res.status}).`);
+    if (res.ok) toast.success("Rebuild-Konfiguration gespeichert.");
+    else toast.danger(`Rebuild-Konfiguration konnte nicht gespeichert werden (HTTP ${res.status}).`);
   };
 
   const rebuildNow = async () => {
     setRebuildStatus("Rebuild wird ausgelöst …");
     const res = await api(`/cms/sites/${site.site_key}/rebuild`, { method: "POST" });
     if (res.ok) {
-      setRebuildStatus("Rebuild ausgelöst.");
+      setRebuildStatus(null);
+      toast.success("Rebuild ausgelöst.");
     } else if (res.status === 503) {
       setRebuildStatus("Kein Rebuild-Token konfiguriert (WEBSITE_REBUILD_TOKEN).");
     } else if (res.status === 422) {
       setRebuildStatus("Für diese Website ist kein Repository hinterlegt.");
     } else {
-      setRebuildStatus(`Fehler (HTTP ${res.status}).`);
+      setRebuildStatus(null);
+      toast.danger(`Rebuild fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -499,7 +505,8 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
             spellCheck={false}
           />
         )}
-        {status ? <p className="tds-alert" role="status">{status}</p> : null}
+        {/* Validation only now — outcomes are toasts. */}
+        {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
         <button className="btn btn-primary" type="button" onClick={save}>Speichern</button>
       </div>
 

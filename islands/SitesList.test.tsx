@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SitesList from "./SitesList";
+import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 
 /**
  * The website-CMS island. Its risky part is the structured form ↔ raw JSON
@@ -25,7 +26,15 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   });
 }
 
+/** Outcomes are toasts now — collected off the `tds:toast` bus. */
+let toasts: Array<{ variant: string; message: string }> = [];
+const collectToast = (e: Event) => {
+  toasts.push((e as CustomEvent<{ variant: string; message: string }>).detail);
+};
+
 beforeEach(() => {
+  toasts = [];
+  window.addEventListener(TOAST_EVENT, collectToast);
   handlers = [];
   calls = [];
   vi.stubGlobal(
@@ -48,7 +57,10 @@ beforeEach(() => {
   );
 });
 
-afterEach(() => cleanup());
+afterEach(() => {
+  window.removeEventListener(TOAST_EVENT, collectToast);
+  cleanup();
+});
 
 const user = () => userEvent.setup({ delay: null });
 const SITE = { id: 1, site_key: "landing", name: "Landingpage", updated_at: "2026-01-01" };
@@ -253,7 +265,7 @@ describe("saving a block", () => {
     const u = await openSite();
     await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText(/Gespeichert/)).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "success" && t.message.includes("Gespeichert"))).toBe(true));
     await waitFor(() => expect(calls.filter((c) => c.url === "/cms/landing/blocks")).toHaveLength(2));
   });
 
@@ -262,7 +274,7 @@ describe("saving a block", () => {
     respond(/\/blocks\/unbekannt$/, {}, 403, "PUT");
     await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText("Fehler (HTTP 403).")).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("403"))).toBe(true));
   });
 
   it("does not reload the block list after a failed save", async () => {
@@ -270,7 +282,7 @@ describe("saving a block", () => {
     respond(/\/blocks\/unbekannt$/, {}, 500, "PUT");
     await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
-    await screen.findByText("Fehler (HTTP 500).");
+await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
     expect(calls.filter((c) => c.url === "/cms/landing/blocks")).toHaveLength(1);
   });
 });
@@ -549,14 +561,14 @@ describe("rebuild and translation controls", () => {
     const u = await openSite();
     respond(/\/rebuild$/, {}, 500, "POST");
     await u.click(screen.getByRole("button", { name: "Jetzt neu bauen" }));
-    expect(await screen.findByText("Fehler (HTTP 500).")).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
   });
 
   it("reports the counts from a translation backfill", async () => {
     const u = await openSite();
     respond(/\/translations\/backfill$/, { created: 2, skipped: 5 }, 200, "POST");
     await u.click(screen.getByRole("button", { name: "Übersetzungen nachziehen" }));
-    expect(await screen.findByText(/2 erstellt, 5 übersprungen/)).toBeTruthy();
+await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /2 erstellt, 5 übersprungen/.test(t.message))).toBe(true));
   });
 
   it("explains a 503 backfill as DeepL not configured", async () => {
