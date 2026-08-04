@@ -40,6 +40,13 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   survive an edit. Replacing instead of spreading silently blanks live landing
   page content on the next save — covered by two tests that fail on exactly that
   mutation.
+- **Outcomes are toasts; configuration problems and validation are not.** Block
+  saves, the rebuild trigger and the translation backfill report through `toast`
+  (tds-shared `>=0.16.0`). The 503 "DeepL not configured" / 503 "no rebuild
+  token" / 422 "no repository" replies stay in the in-flow banner — they name
+  something an operator has to go and set — as does JSON/section-key validation.
+  That banner is `.tds-alert--danger` now, since failures are all it carries.
+  Never mount a `ToastHost` here; the frontend host owns the only one.
 
 ## Tests
 

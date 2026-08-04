@@ -1,6 +1,6 @@
 {
   "name": "@tracht-digital-solutions/tds-ext-website-cms",
-  "version": "0.1.24",
+  "version": "0.1.25",
   "description": "Website-CMS extension for the TDS panel platform: build-time content management (1:n sites) for the public sites, via frontend-contract.",
   "license": "UNLICENSED",
   "private": false,
@@ -35,7 +35,7 @@
     "@tracht-digital-solutions/tds-frontend-contract": "^1.0.0"
   },
   "peerDependencies": {
-    "@tracht-digital-solutions/tds-shared": ">=0.14.0",
+    "@tracht-digital-solutions/tds-shared": ">=0.16.0",
     "astro": ">=6",
     "react": ">=18",
     "react-dom": ">=18"

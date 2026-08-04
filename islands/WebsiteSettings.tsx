@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Spinner } from "@tracht-digital-solutions/tds-shared/components";
+import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 
 interface Masked {
   key: string;
@@ -66,10 +66,10 @@ export default function WebsiteSettings() {
     if (res.ok) {
       setDeeplInput("");
       setRebuildInput("");
-      setStatus("Gespeichert.");
+      toast.success("Gespeichert.");
       void load();
     } else {
-      setStatus(`Fehler (HTTP ${res.status}).`);
+      toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -107,7 +107,9 @@ export default function WebsiteSettings() {
         />
       </label>
 
-      {status ? <p className="tds-alert" role="status">{status}</p> : null}
+      {/* The load failure stays in-flow (persistent state); the save outcome
+          is a toast. Failures only, hence the danger hue. */}
+      {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
       <button className="btn btn-primary" type="button" onClick={save} disabled={busy}>Speichern</button>
     </div>
   );
