@@ -244,7 +244,7 @@ function StringListEditor({ field, items, onChange }: { field: StringListField; 
         <button type="button" className="btn btn-ghost text-xs" onClick={() => onChange([...items, ""])}>+ {field.itemLabel}</button>
       </div>
       {items.map((s, i) => (
-        <div key={i} className="flex gap-2">
+        <div key={i} className="flex flex-wrap gap-2">
           <input className="field-boxed" value={s} onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))} />
           <button type="button" className="btn btn-danger text-xs" onClick={() => onChange(items.filter((_, idx) => idx !== i))}>×</button>
         </div>
@@ -486,7 +486,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
             </button>
           ) : null}
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <input className="field-boxed" value={sectionKey} onChange={(e) => setSection(e.target.value)} placeholder="section-key (z. B. faq)" />
           <select className="field-boxed" value={lang} onChange={(e) => setLang(e.target.value)}>
             <option value="de">de</option>
@@ -527,7 +527,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           Repository (<code>owner/name</code>) und Workflow-Datei, die ein Speichern neu baut.
           Der Token wird serverseitig über <code>WEBSITE_REBUILD_TOKEN</code> bereitgestellt.
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <input className="field-boxed"
             value={rebuildRepo}
             onChange={(e) => setRebuildRepo(e.target.value)}
@@ -540,7 +540,7 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
           />
         </div>
         {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
           <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
         </div>
