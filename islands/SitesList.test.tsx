@@ -18,9 +18,18 @@ type Hit = { status?: number; body?: unknown };
 let handlers: Array<(url: string, init?: RequestInit) => Hit | undefined> = [];
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 
+
+/**
+ * Path + query of a request. The island calls an ABSOLUTE URL now (via
+ * `apiFetch`); a relative one would hit the product's own static host and come
+ * back as SPA-fallback HTML with a 200. Matching on the path keeps the route
+ * matchers below anchored.
+ */
+const pathOf = (url: string) => String(url).replace(/^https?:\/\/[^/]+/i, "");
+
 function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   handlers.unshift((url, init) => {
-    if (!match.test(url)) return undefined;
+    if (!match.test(pathOf(url))) return undefined;
     if (method && (init?.method ?? "GET") !== method) return undefined;
     return { status, body };
   });
@@ -68,7 +77,7 @@ const SITE = { id: 1, site_key: "landing", name: "Landingpage", updated_at: "202
 async function renderSites(sites: unknown[] = [SITE]) {
   respond(/\/cms\/sites$/, { sites });
   render(<SitesList />);
-  await waitFor(() => expect(calls.some((c) => c.url === "/cms/sites")).toBe(true));
+  await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/cms/sites")).toBe(true));
 }
 
 /** Open the site editor for `landing`. */
@@ -155,7 +164,7 @@ describe("the site list", () => {
     await u.type(screen.getByPlaceholderText("site-key (kebab)"), "neu");
     await u.type(screen.getByPlaceholderText("Name"), "Neu");
     await u.click(screen.getByRole("button", { name: "Website hinzufügen" }));
-    await waitFor(() => expect(calls.filter((c) => c.url === "/cms/sites" && c.method === "GET")).toHaveLength(2));
+    await waitFor(() => expect(calls.filter((c) => pathOf(c.url) === "/cms/sites" && c.method === "GET")).toHaveLength(2));
     expect((screen.getByPlaceholderText("site-key (kebab)") as HTMLInputElement).value).toBe("");
   });
 });
@@ -163,7 +172,7 @@ describe("the site list", () => {
 describe("the block list", () => {
   it("scopes the block request to the selected site", async () => {
     await openSite();
-    expect(calls.some((c) => c.url === "/cms/landing/blocks")).toBe(true);
+    expect(calls.some((c) => pathOf(c.url) === "/cms/landing/blocks")).toBe(true);
   });
 
   it("lists a block with its language", async () => {
@@ -212,7 +221,7 @@ describe("saving a block", () => {
     await u.type(screen.getByPlaceholderText(/section-key/), "cookie_banner");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(puts()[0]!.url).toBe("/cms/landing/blocks/cookie_banner");
+    expect(pathOf(puts()[0]!.url)).toBe("/cms/landing/blocks/cookie_banner");
   });
 
   it("refuses to save invalid JSON", async () => {
@@ -266,7 +275,7 @@ describe("saving a block", () => {
     await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
 await waitFor(() => expect(toasts.some((t) => t.variant === "success" && t.message.includes("Gespeichert"))).toBe(true));
-    await waitFor(() => expect(calls.filter((c) => c.url === "/cms/landing/blocks")).toHaveLength(2));
+    await waitFor(() => expect(calls.filter((c) => pathOf(c.url) === "/cms/landing/blocks")).toHaveLength(2));
   });
 
   it("reports the status when a save fails", async () => {
@@ -283,7 +292,7 @@ await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.messag
     await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
 await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
-    expect(calls.filter((c) => c.url === "/cms/landing/blocks")).toHaveLength(1);
+    expect(calls.filter((c) => pathOf(c.url) === "/cms/landing/blocks")).toHaveLength(1);
   });
 });
 
@@ -538,7 +547,7 @@ describe("rebuild and translation controls", () => {
     await u.type(screen.getByPlaceholderText(/tds-landingpage-frontend/), "  o/r  ");
     await u.click(screen.getByRole("button", { name: "Konfiguration speichern" }));
     await waitFor(() => {
-      const put = puts().find((c) => c.url.includes("rebuild-config"));
+      const put = puts().find((c) => pathOf(c.url).includes("rebuild-config"));
       expect(put?.body).toMatchObject({ rebuild_repo: "o/r", rebuild_workflow: "dev.yml" });
     });
   });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
 
 interface Site {
   id: number;
@@ -17,7 +18,7 @@ interface BlockMeta {
   updated_at: string;
 }
 
-const api = (path: string, init?: RequestInit) => fetch(path, { credentials: "include", ...init });
+const api = apiFetch;
 
 /**
  * Website-CMS: managed-sites list + add-site form (CP1) and the per-site content

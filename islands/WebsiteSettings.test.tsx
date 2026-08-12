@@ -67,10 +67,19 @@ const CONFIGURED = {
 /** Render and wait for the mount fetch to resolve. */
 async function renderSettings() {
   render(<WebsiteSettings />);
-  await waitFor(() => expect(calls.some((c) => c.url === NS && c.method === "GET")).toBe(true));
+  await waitFor(() => expect(calls.some((c) => pathOf(c.url) === NS && c.method === "GET")).toBe(true));
 }
 
 const put = () => calls.find((c) => c.method === "PUT");
+
+/**
+ * Path + query of a request. The island calls an ABSOLUTE URL now (via
+ * `apiFetch`); a relative one would hit the product's own static host and come
+ * back as SPA-fallback HTML with a 200. Matching on the path keeps the route
+ * matchers below anchored.
+ */
+const pathOf = (url: string) => String(url).replace(/^https?:\/\/[^/]+/i, "");
+
 const sent = () => (put()!.body as { settings: Array<{ key: string; value: string; secret: boolean }> }).settings;
 const valueOf = (key: string) => sent().find((s) => s.key === key)!.value;
 
@@ -78,7 +87,12 @@ describe("loading", () => {
   it("reads the website-cms namespace with credentials", async () => {
     await renderSettings();
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    expect(fetchMock.mock.calls[0]![0]).toBe(NS);
+    expect(pathOf(fetchMock.mock.calls[0]![0] as string)).toBe(NS);
+    // Absolute, on the API host. Every other assertion here matches the PATH,
+    // which a relative fetch satisfies too — so this is the one that fails if
+    // the call ever goes back to the product's own origin (whose SPA fallback
+    // answers 200 + HTML and turns into a silent empty state).
+    expect(String(fetchMock.mock.calls[0]![0]).startsWith("https://api.tracht-digital.de/")).toBe(true);
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({ credentials: "include" });
   });
 
@@ -175,7 +189,7 @@ describe("saving", () => {
     await renderSettings();
     await user().click(await screen.findByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(put()).toBeDefined());
-    expect(put()!.url).toBe(NS);
+    expect(pathOf(put()!.url)).toBe(NS);
     expect(sent().map((s) => s.key).sort()).toEqual(["auto_translate", "deepl_api_key", "rebuild_token"]);
   });
 
