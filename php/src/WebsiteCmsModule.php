@@ -6,12 +6,14 @@ namespace Tds\Ext\WebsiteCms;
 use PDO;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
+use Psr\Http\Message\UploadedFileInterface;
 use Slim\App;
 use Tds\Ext\WebsiteCms\Domain\CmsRepository;
 use Tds\Ext\WebsiteCms\Service\DeeplTranslator;
 use Tds\Ext\WebsiteCms\Service\RebuildTrigger;
 use Tds\Ext\WebsiteCms\Service\TranslatableJsonWalker;
 use Tds\Ext\WebsiteCms\Service\TranslationSync;
+use Tds\Ext\WebsiteCms\Support\LegalDocFile;
 use Tds\Frontend\Contract\AbstractModule;
 use Tds\Frontend\Contract\PermissionDef;
 use Tds\Frontend\Contract\SettingsStore;
@@ -102,6 +104,144 @@ final class WebsiteCmsModule extends AbstractModule
             } catch (\Throwable) {
                 return self::json($res, ['blocks' => (object) []]);
             }
+        });
+
+        // Public legal-document metadata: which uploaded PDFs exist for the
+        // default site, per key and language. The landingpage build reads this
+        // to decide whether to bake the uploaded AGB or its committed fallback,
+        // and to render the "Stand: …" label. Same fail-safe as /content/landing.
+        $app->get('/content/legal', function (Request $req, Response $res) use ($c): Response {
+            try {
+                $repo = $c->get(CmsRepository::class);
+                $site = $repo->defaultSite();
+                $docs = [];
+                foreach ($site === null ? [] : $repo->legalDocs((int) $site['id']) as $row) {
+                    $docs[(string) $row['doc_key']][(string) $row['lang']] = self::legalMeta($row);
+                }
+                // Nested maps must be objects in JSON even when empty.
+                foreach ($docs as $key => $langs) {
+                    $docs[$key] = (object) $langs;
+                }
+                return self::json($res, ['docs' => (object) $docs]);
+            } catch (\Throwable) {
+                return self::json($res, ['docs' => (object) []]);
+            }
+        });
+
+        // Public document bytes — what the landingpage build downloads and what
+        // a visitor's browser would hit directly. Read-only and ungated, like
+        // /content/landing; a missing document is a 404, never a 500.
+        $app->get('/content/legal/{key:[a-z0-9-]+}.pdf', function (Request $req, Response $res, array $args) use ($c): Response {
+            try {
+                $repo = $c->get(CmsRepository::class);
+                $site = $repo->defaultSite();
+                $lang = self::lang($req->getQueryParams()['lang'] ?? null);
+                $doc = $site === null ? null : $repo->legalDocWithContent((int) $site['id'], (string) $args['key'], $lang);
+                if ($doc === null) {
+                    return self::json($res, ['error' => 'Not found'], 404);
+                }
+                return self::pdf($res, $doc);
+            } catch (\Throwable) {
+                return self::json($res, ['error' => 'Not found'], 404);
+            }
+        });
+
+        // --- legal documents, admin side ------------------------------------
+
+        $app->get('/cms/sites/{site:[a-z0-9-]+}/legal', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:read', $res)) !== null) {
+                return $deny;
+            }
+            $repo = $c->get(CmsRepository::class);
+            $site = $repo->findSite((string) $args['site']);
+            if ($site === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $docs = array_map(
+                static fn (array $row): array => self::legalMeta($row) + ['docKey' => (string) $row['doc_key'], 'lang' => (string) $row['lang']],
+                $repo->legalDocs((int) $site['id']),
+            );
+            return self::json($res, ['docs' => $docs]);
+        });
+
+        // Multipart upload (field "file") — replaces the document for one
+        // (site, key, language). Rejects anything that is not really a PDF.
+        $app->post('/cms/sites/{site:[a-z0-9-]+}/legal/{key:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
+                return $deny;
+            }
+            $key = (string) $args['key'];
+            if (!LegalDocFile::keyValid($key)) {
+                return self::json($res, ['error' => 'Invalid document key'], 422);
+            }
+            $file = $req->getUploadedFiles()['file'] ?? null;
+            if (!$file instanceof UploadedFileInterface || $file->getError() !== UPLOAD_ERR_OK) {
+                return self::json($res, ['error' => 'No valid file uploaded under "file"'], 400);
+            }
+            if ((int) $file->getSize() > LegalDocFile::MAX_BYTES) {
+                return self::json($res, ['error' => 'File exceeds 8 MB'], 413);
+            }
+            $bytes = (string) $file->getStream();
+            // Sniff the magic number — the client-declared media type is not evidence.
+            if (!LegalDocFile::looksLikePdf($bytes)) {
+                return self::json($res, ['error' => 'Only PDF documents are accepted'], 415);
+            }
+            $repo = $c->get(CmsRepository::class);
+            $site = $repo->findSite((string) $args['site']);
+            if ($site === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $body = (array) $req->getParsedBody();
+            $lang = self::lang($body['lang'] ?? null);
+            $label = trim((string) ($body['version_label'] ?? ''));
+            $repo->putLegalDoc(
+                (int) $site['id'],
+                $key,
+                $lang,
+                LegalDocFile::sanitizeFilename((string) $file->getClientFilename()),
+                LegalDocFile::MIME,
+                $bytes,
+                $label !== '' ? substr($label, 0, 128) : null,
+            );
+            self::fireRebuild($c->get(RebuildTrigger::class), $site, 'legal doc ' . $key . ' (' . $lang . ') uploaded');
+            return self::json($res, ['ok' => true], 201);
+        });
+
+        $app->delete('/cms/sites/{site:[a-z0-9-]+}/legal/{key:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
+                return $deny;
+            }
+            $repo = $c->get(CmsRepository::class);
+            $site = $repo->findSite((string) $args['site']);
+            if ($site === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $lang = self::lang($req->getQueryParams()['lang'] ?? null);
+            $key = (string) $args['key'];
+            if (!$repo->deleteLegalDoc((int) $site['id'], $key, $lang)) {
+                return self::json($res, ['error' => 'Not found'], 404);
+            }
+            self::fireRebuild($c->get(RebuildTrigger::class), $site, 'legal doc ' . $key . ' (' . $lang . ') deleted');
+            return self::json($res, ['ok' => true]);
+        });
+
+        // Admin preview of the stored bytes (the public route only ever serves
+        // the DEFAULT site, so an editor managing a second site needs this one).
+        $app->get('/cms/sites/{site:[a-z0-9-]+}/legal/{key:[a-z0-9-]+}/file', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:read', $res)) !== null) {
+                return $deny;
+            }
+            $repo = $c->get(CmsRepository::class);
+            $site = $repo->findSite((string) $args['site']);
+            if ($site === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $lang = self::lang($req->getQueryParams()['lang'] ?? null);
+            $doc = $repo->legalDocWithContent((int) $site['id'], (string) $args['key'], $lang);
+            if ($doc === null) {
+                return self::json($res, ['error' => 'Not found'], 404);
+            }
+            return self::pdf($res, $doc);
         });
 
         $app->get('/cms/summary', function (Request $req, Response $res) use ($c): Response {
@@ -294,6 +434,39 @@ final class WebsiteCmsModule extends AbstractModule
             return self::json($res, ['error' => 'Forbidden'], 403);
         }
         return null;
+    }
+
+    /**
+     * A legal document row as the API exposes it — metadata only, never the
+     * bytes (a listing must not ship megabytes of base64).
+     *
+     * @param array<string,mixed> $row
+     * @return array<string,mixed>
+     */
+    private static function legalMeta(array $row): array
+    {
+        return [
+            'filename' => (string) $row['filename'],
+            'sizeBytes' => (int) $row['size_bytes'],
+            'versionLabel' => $row['version_label'] !== null ? (string) $row['version_label'] : null,
+            'updatedAt' => (string) $row['updated_at'],
+        ];
+    }
+
+    /**
+     * Stream a stored document. `inline` so a browser opening the URL shows the
+     * PDF rather than downloading it — the landingpage's own download button
+     * sets the `download` attribute when it wants the other behaviour.
+     *
+     * @param array<string,mixed> $doc
+     */
+    private static function pdf(Response $res, array $doc): Response
+    {
+        $res->getBody()->write((string) $doc['content']);
+        return $res
+            ->withHeader('Content-Type', LegalDocFile::MIME)
+            ->withHeader('Content-Length', (string) strlen((string) $doc['content']))
+            ->withHeader('Content-Disposition', 'inline; filename="' . LegalDocFile::sanitizeFilename((string) $doc['filename']) . '"');
     }
 
     private static function lang(mixed $value): string

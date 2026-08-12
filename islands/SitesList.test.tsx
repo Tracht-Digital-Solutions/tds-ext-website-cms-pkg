@@ -264,7 +264,9 @@ describe("saving a block", () => {
     const u = await openSite();
     await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
     await setJson(u, '{"a":1}');
-    await u.selectOptions(screen.getByRole("combobox"), "en");
+    // By name, not by role alone — the editor also carries the legal-document
+    // uploader, which has a language select of its own.
+    await u.selectOptions(screen.getByLabelText("Sprache des Blocks"), "en");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0]!.body).toEqual({ value: { a: 1 }, lang: "en" });

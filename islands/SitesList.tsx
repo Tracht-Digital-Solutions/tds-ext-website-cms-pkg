@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import LegalDocs from "./LegalDocs.tsx";
 
 interface Site {
   id: number;
@@ -489,7 +490,12 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
         </div>
         <div className="flex flex-wrap gap-2">
           <input className="field-boxed" value={sectionKey} onChange={(e) => setSection(e.target.value)} placeholder="section-key (z. B. faq)" />
-          <select className="field-boxed" value={lang} onChange={(e) => setLang(e.target.value)}>
+          <select
+            className="field-boxed"
+            aria-label="Sprache des Blocks"
+            value={lang}
+            onChange={(e) => setLang(e.target.value)}
+          >
             <option value="de">de</option>
             <option value="en">en</option>
           </select>
@@ -521,6 +527,8 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
         {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
         <button className="btn btn-primary" type="button" onClick={backfill}>Übersetzungen nachziehen</button>
       </div>
+
+      <LegalDocs siteKey={site.site_key} />
 
       <div className="cms-editor__rebuild">
         <h3>Rebuild-Konfiguration</h3>

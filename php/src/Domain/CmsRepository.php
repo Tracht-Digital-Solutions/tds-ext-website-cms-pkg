@@ -158,4 +158,93 @@ final class CmsRepository
         );
         $stmt->execute([':s' => $siteId, ':k' => $sectionKey, ':l' => $lang]);
     }
+
+    // --- legal documents ------------------------------------------------------
+    // Uploadable PDFs (AGB & co), one row per (site, doc_key, lang). The bytes
+    // live in the row (see the migration for why); every metadata query below
+    // therefore selects columns explicitly and never `*`, so listing documents
+    // does not drag megabytes through PHP.
+
+    private const LEGAL_META = 'id, doc_key, lang, filename, mime_type, size_bytes, version_label, updated_at';
+
+    /** Metadata for a site's documents, newest key first. @return list<array<string,mixed>> */
+    public function legalDocs(int $siteId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT ' . self::LEGAL_META . ' FROM cms_legal_doc WHERE site_id = :s ORDER BY doc_key, lang'
+        );
+        $stmt->execute([':s' => $siteId]);
+        return $stmt->fetchAll();
+    }
+
+    /** @return array<string,mixed>|null metadata only */
+    public function legalDocMeta(int $siteId, string $docKey, string $lang): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT ' . self::LEGAL_META . ' FROM cms_legal_doc
+             WHERE site_id = :s AND doc_key = :k AND lang = :l LIMIT 1'
+        );
+        $stmt->execute([':s' => $siteId, ':k' => $docKey, ':l' => $lang]);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
+    }
+
+    /** Metadata **plus** the bytes under `content`. @return array<string,mixed>|null */
+    public function legalDocWithContent(int $siteId, string $docKey, string $lang): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT ' . self::LEGAL_META . ', content FROM cms_legal_doc
+             WHERE site_id = :s AND doc_key = :k AND lang = :l LIMIT 1'
+        );
+        $stmt->execute([':s' => $siteId, ':k' => $docKey, ':l' => $lang]);
+        $row = $stmt->fetch();
+        if ($row === false) {
+            return null;
+        }
+        // PDO returns a BLOB as a stream on some drivers and a string on others.
+        $content = $row['content'];
+        $row['content'] = is_resource($content) ? (string) stream_get_contents($content) : (string) $content;
+        return $row;
+    }
+
+    /** Upsert a document's bytes + metadata for one (site, key, language). */
+    public function putLegalDoc(
+        int $siteId,
+        string $docKey,
+        string $lang,
+        string $filename,
+        string $mimeType,
+        string $content,
+        ?string $versionLabel,
+    ): void {
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO cms_legal_doc (site_id, doc_key, lang, filename, mime_type, size_bytes, version_label, content)
+             VALUES (:s, :k, :l, :f, :m, :sz, :v, :c)
+             ON DUPLICATE KEY UPDATE
+               filename = :f2, mime_type = :m2, size_bytes = :sz2, version_label = :v2, content = :c2'
+        );
+        $stmt->bindValue(':s', $siteId, PDO::PARAM_INT);
+        $stmt->bindValue(':k', $docKey);
+        $stmt->bindValue(':l', $lang);
+        $stmt->bindValue(':f', $filename);
+        $stmt->bindValue(':f2', $filename);
+        $stmt->bindValue(':m', $mimeType);
+        $stmt->bindValue(':m2', $mimeType);
+        $stmt->bindValue(':sz', strlen($content), PDO::PARAM_INT);
+        $stmt->bindValue(':sz2', strlen($content), PDO::PARAM_INT);
+        $stmt->bindValue(':v', $versionLabel);
+        $stmt->bindValue(':v2', $versionLabel);
+        $stmt->bindValue(':c', $content, PDO::PARAM_LOB);
+        $stmt->bindValue(':c2', $content, PDO::PARAM_LOB);
+        $stmt->execute();
+    }
+
+    public function deleteLegalDoc(int $siteId, string $docKey, string $lang): bool
+    {
+        $stmt = $this->pdo->prepare(
+            'DELETE FROM cms_legal_doc WHERE site_id = :s AND doc_key = :k AND lang = :l'
+        );
+        $stmt->execute([':s' => $siteId, ':k' => $docKey, ':l' => $lang]);
+        return $stmt->rowCount() > 0;
+    }
 }

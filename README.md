@@ -24,8 +24,29 @@ blocks are scoped to a site.
   (landing sections + the blog's `cookie_banner`/`ads` config blocks). Degrades to
   `{blocks:{}}` on a DB error (build-fetch fail-safe).
 
+## Legal documents (PDF)
+
+Uploadable PDFs — the **AGB** today, any `doc_key` tomorrow — one per
+**site × doc_key × language**. Unlike a content block there is no text to edit:
+the uploaded PDF *is* the document, and the public site bakes its bytes into
+`dist/` at build time. An upload fires the site's rebuild, so the flow is
+upload → rebuild → live.
+
+- **Admin:** `GET /cms/sites/{site}/legal` (`website:read`),
+  `POST /cms/sites/{site}/legal/{key}` (`website:write`, multipart `file` +
+  `lang` + optional `version_label`), `DELETE /cms/sites/{site}/legal/{key}?lang=`,
+  `GET /cms/sites/{site}/legal/{key}/file?lang=` (preview).
+- **Public (UNAUTHENTICATED):** `GET /content/legal` → metadata map
+  `{docs: {agb: {de: {filename, sizeBytes, versionLabel, updatedAt}}}}`, and
+  `GET /content/legal/{key}.pdf?lang=de` → the bytes. Both degrade to an empty
+  map / a 404 rather than a 500.
+- **PDF only, 8 MB max**, and the check is the `%PDF-` magic number, not the
+  client-declared media type. The bytes live in the `cms_legal_doc` row
+  (`MEDIUMBLOB`) rather than on disk — see the migration for why.
+- **UI:** a *Rechtsdokumente* section in the site editor (`islands/LegalDocs.tsx`).
+
 Auth: the admin routes need `website:read`/`website:write` from the core `UserContext`
-(admins bypass); the `/content/landing` public read is ungated. Data via the core `PDO`.
+(admins bypass); the `/content/*` public reads are ungated. Data via the core `PDO`.
 
 ## Still to port (later checkpoints)
 

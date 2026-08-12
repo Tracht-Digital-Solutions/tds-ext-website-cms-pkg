@@ -9,6 +9,11 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   language, `value_json`) are read by the static sites at build time and merged
   over defaults; a missing row falls back. Never fetch this from the client at
   runtime (same rule as content-api).
+- **Legal documents are the same model with bytes instead of JSON.**
+  `cms_legal_doc` (one per site × `doc_key` × language) holds an uploaded PDF —
+  the AGB today. There is no text to edit and no default to merge over: the
+  uploaded file *is* the document, the public site downloads it at build time
+  and bakes it into `dist/`, and an upload fires the site's rebuild.
 - **1:n sites:** the `cms_site` registry scopes blocks. `cms_block.site_id` FK →
   `cms_site` (CASCADE). Unique `(site_id, section_key, lang)`.
 - **Auth via the core `UserContext`** — `website:read`/`website:write` (admins
@@ -42,6 +47,23 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   as a `{blocks: {section_key: value}}` map (landing sections + the blog's
   `cookie_banner`/`ads` config blocks). **Degrades to `{blocks:{}}` on any DB
   error** (build-fetch fail-safe) — keep it read-only and ungated.
+- **A legal document's bytes live in the DB, not on disk** — deliberately
+  different from `tds-ext-documents-pkg`, which stores customer documents under
+  `DOCUMENT_ROOT_DIR`. These are a handful of small files (8 MB cap, the real
+  AGB is ~90 KB) read once per build; a `MEDIUMBLOB` needs no new writable
+  directory on the Plesk host, and host-side setup is this platform's chronic
+  go-live blocker. Every metadata query therefore names its columns instead of
+  `SELECT *`, so listing documents does not drag the blobs through PHP.
+- **Trust the magic number, not the media type.** A multipart upload's
+  `Content-Type` and filename are both attacker-supplied; the route sniffs
+  `%PDF-` in the first KB and 415s otherwise. `LegalDocFile::sanitizeFilename()`
+  is what makes the value safe to echo into a `Content-Disposition` — it is the
+  only thing standing between a crafted filename and header injection, and the
+  module test pins it.
+- **`GET /content/legal*` is the second UNAUTHENTICATED surface** (alongside
+  `/content/landing`) and answers for the **default site only**. That is why the
+  admin preview route exists separately: an editor managing a second site cannot
+  reach its documents through the public one.
 - Migration class names are **module-prefixed** (`WebsiteCms*`) AND the numeric
   **version prefixes are globally unique** (this module owns the `20260727*`
   band) — every composed module's migrations share one `phinxlog`, so a reused
@@ -78,6 +100,11 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 - `islands/WebsiteSettings.test.tsx` — the masked-secret contract: a secret
   never round-trips to the DOM, and a **blank** secret on save means *keep*, so
   toggling auto-translate cannot wipe the DeepL key.
+- `islands/LegalDocs.test.tsx` — the PDF uploader. The upload is **multipart**,
+  so the test pins that no JSON `Content-Type` is set (one would strip the
+  boundary and the server would see no file); that 415/413 land in the flow
+  while a transport failure toasts **with its status**; and that both the calls
+  and the "Ansehen" link are absolute on the API host.
 - `src/index.test.ts` + `tests/packaging.test.ts` — the manifest as a product
   build sees it, and that every specifier resolves to a real file that is both
   covered by `exports` and inside the published `files` list.
@@ -155,13 +182,26 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
   emits the correctly-typed value (string/number/bool) and `blank()` seeds new list
   items per field type. Shapes verified against tds-shared-pkg `translations.ts`
   (`t.pricing`/`t.consulting`/`t.footer`).
+- **CP9:** **legal documents (PDF upload).** `cms_legal_doc` +
+  `Support\LegalDocFile` + admin CRUD + the public `GET /content/legal` and
+  `GET /content/legal/{key}.pdf`, driven by `islands/LegalDocs.tsx` in the site
+  editor. Built for the landingpage's AGB page (`/legal/agb` +
+  `/legal/agb.pdf`, DE and EN), which downloads the document at build time and
+  falls back to a committed copy so the link is never dead. Legal text is **not**
+  machine-translated — unlike blocks, the EN document is a separate upload, and
+  `TranslationSync` does not see these rows at all.
 - **TODO (next):** nothing outstanding for the structured forms — extend
   `SECTION_SCHEMAS` if a site introduces a new section shape.
 
 ## After a change
 
-Bump `version` in `package.json` + `composer.json` (lockstep), update docs,
-commit together.
+Update the docs and commit them with the code. **Do not touch `version` in
+`package.json` / `composer.json`** — `release.yml` → `_build.yml` runs
+`npm version <bump>` on top of what is committed and writes `composer.json` in
+lockstep, so a hand-bump double-bumps. A `0.x` caret is minor-locked, so a
+double-bump can land outside the product's pin and silently ship nothing. Pick
+the bump on the Release button instead; keep it inside the `0.1.x` line
+`tds-admin-frontend` pins.
 
 ## Mobile layout
 
