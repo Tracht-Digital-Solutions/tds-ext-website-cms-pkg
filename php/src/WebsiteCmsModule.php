@@ -15,6 +15,7 @@ use Tds\Ext\WebsiteCms\Service\TranslatableJsonWalker;
 use Tds\Ext\WebsiteCms\Service\TranslationSync;
 use Tds\Ext\WebsiteCms\Support\LegalDocFile;
 use Tds\Frontend\Contract\AbstractModule;
+use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\PermissionDef;
 use Tds\Frontend\Contract\SettingsStore;
 use Tds\Frontend\Contract\UserContext;
@@ -26,7 +27,7 @@ use Tds\Frontend\Contract\UserContext;
  * the core PDO. A save triggering a static-site rebuild (workflow_dispatch) lands
  * in a later checkpoint.
  */
-final class WebsiteCmsModule extends AbstractModule
+final class WebsiteCmsModule extends AbstractModule implements ApiDocSource
 {
     private const LANGS = ['de', 'en'];
 
@@ -488,5 +489,16 @@ final class WebsiteCmsModule extends AbstractModule
     {
         $res->getBody()->write(json_encode($data, JSON_THROW_ON_ERROR));
         return $res->withStatus($status)->withHeader('Content-Type', 'application/json');
+    }
+
+    /**
+     * Route documentation for the admin frontend's API reference. Kept in its
+     * own file so the prose does not sit in the middle of the wiring.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function apiDocs(): array
+    {
+        return require __DIR__ . '/../docs/api.php';
     }
 }
