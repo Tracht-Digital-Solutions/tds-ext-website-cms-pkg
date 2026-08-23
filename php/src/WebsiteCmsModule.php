@@ -18,6 +18,7 @@ use Tds\Frontend\Contract\AbstractModule;
 use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\PermissionDef;
 use Tds\Frontend\Contract\SettingsStore;
+use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
 
 /**
@@ -27,7 +28,7 @@ use Tds\Frontend\Contract\UserContext;
  * the core PDO. A save triggering a static-site rebuild (workflow_dispatch) lands
  * in a later checkpoint.
  */
-final class WebsiteCmsModule extends AbstractModule implements ApiDocSource
+final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, SiteKeyProtected
 {
     private const LANGS = ['de', 'en'];
 
@@ -500,5 +501,25 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource
     public function apiDocs(): array
     {
         return require __DIR__ . '/../docs/api.php';
+    }
+
+    /**
+     * The routes the public landingpage reads at BUILD time.
+     *
+     * `/content/legal` covers the PDF endpoint under it as well
+     * (`/content/legal/{key}.pdf`), and that is deliberate: it is fetched by the
+     * same build step that fetches the listing, and the landingpage keeps a
+     * committed fallback PDF for exactly the case where it cannot be reached.
+     *
+     * Only this module's routes are listed. `/content` as a prefix would also
+     * swallow blog-cms's, i.e. one module gating another's surface — and it
+     * would stop doing so the day blog-cms renamed a path, with nothing to
+     * notice.
+     *
+     * @return list<string>
+     */
+    public function siteKeyRoutes(): array
+    {
+        return ['/content/landing', '/content/legal'];
     }
 }

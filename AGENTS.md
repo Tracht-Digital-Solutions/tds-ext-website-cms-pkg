@@ -240,3 +240,23 @@ by `"<METHOD> <pattern>"`. Two things to know before editing a route:
   renaming a route without touching `docs/api.php` fails there. That is the
   point: prose next to code rots, and a reference full of confident, wrong
   detail is worse than the bare route list it replaced.
+
+## Site keys (`SiteKeyProtected`)
+
+This module implements the contract's optional `SiteKeyProtected` and declares
+`/content/landing`, `/content/legal` — what the public landingpage reads at
+**build time**, and the only routes the base's site-key middleware may gate.
+
+- `/content/legal` covers `/content/legal/{key}.pdf` too, deliberately: the same
+  build step fetches both, and the landingpage keeps a committed fallback PDF for
+  exactly the case where it cannot be reached.
+- **Never widen to `/content`.** That would swallow blog-cms's routes as well —
+  one module gating another's surface, and silently ceasing to the day blog-cms
+  renames a path.
+- **Never list a route a visitor's browser calls.** A browser has no key and
+  never will; the first such entry turns `enforce` into an outage on the public
+  site.
+- `php/tests/WebsiteCmsApiDocsTest.php` asserts every declared prefix still
+  covers a mounted route and reaches no `/admin` route. An orphaned prefix does
+  not leave a blank row — it leaves an **unprotected route** that looks
+  deliberate.
