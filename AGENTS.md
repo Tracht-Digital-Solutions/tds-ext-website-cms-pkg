@@ -23,6 +23,36 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 
 ## Gotchas
 
+- **Never guard a container binding with `!$c->has(X::class)` — saving a content
+  block 500'd for months because of it.** PHP-DI answers `has()` out of its
+  definition sources, and *autowiring is one of them*: for any concrete,
+  instantiable class the answer is always `true`, bound or not. So
+
+  ```php
+  if ($c !== null && !$c->has(TranslationSync::class)) { $c->set(…); }   // never runs
+  ```
+
+  skipped every binding it protected, and the container quietly autowired
+  instead. For `CmsRepository` that is invisible — its only argument is the
+  bound `PDO`, so the autowired object is identical. For `RebuildTrigger` and
+  `TranslationSync` it is fatal, because their constructors take **strings**:
+
+  ```
+  Entry "…\Service\TranslationSync" cannot be resolved: Entry "…\Service\DeeplTranslator"
+  cannot be resolved: Parameter $apiKey of __construct() has no value defined or guessable
+  ```
+
+  Reading the CMS worked; `PUT /cms/{site}/blocks/{key}`, the delete and the
+  translation backfill answered **500**, and the settings-store factories (DeepL
+  key, rebuild PAT) had never run once — so those panel settings were dead too.
+  Nothing anywhere went red: this repo's CI runs type-check + build, not tests;
+  the composed API's `CompositionTest` only checks that routes are *mounted*; and
+  a PHP-DI entry is built lazily, so a broken binding costs nothing until
+  somebody saves. The module owns these classes and nothing else defines them,
+  so **bind unconditionally**. Pinned by `ExtensionBindingsTest` in
+  `tds-core-frontend-api`, which reads the `$c->set(…)` calls out of every
+  composed module's source and resolves each one.
+
 - **Call the API with `apiFetch` from `@tracht-digital-solutions/tds-shared/api`,
   never a relative `fetch`.** Every island used to define its own
   `const api = (path, init) => fetch(path, { credentials: "include", ...init })`

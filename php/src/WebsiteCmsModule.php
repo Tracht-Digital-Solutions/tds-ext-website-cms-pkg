@@ -55,10 +55,19 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
     public function register(App $app): void
     {
         $c = $app->getContainer();
-        if ($c !== null && !$c->has(CmsRepository::class)) {
-            $c->set(CmsRepository::class, static fn ($c) => new CmsRepository($c->get(PDO::class)));
-        }
-        if ($c !== null && !$c->has(RebuildTrigger::class)) {
+        // NEVER guard these with `!$c->has(X)`. PHP-DI answers `has()` from its
+        // definition sources, and autowiring is one of them: for any *concrete,
+        // instantiable* class the answer is always true, whether or not anyone
+        // ever bound it. So the guard skipped every one of these bindings and the
+        // container silently autowired instead — invisible for the repository
+        // (its only argument is the bound PDO, so the object is identical), fatal
+        // for the two services below, whose constructors take strings PHP-DI
+        // cannot guess. Saving a block 500'd with `Parameter $apiKey of
+        // __construct() has no value defined or guessable` and the settings-store
+        // factories here never ran at all. The module owns these classes; nothing
+        // else defines them, so binding unconditionally is the correct shape.
+        $c?->set(CmsRepository::class, static fn ($c) => new CmsRepository($c->get(PDO::class)));
+        if ($c !== null) {
             $c->set(RebuildTrigger::class, static function ($c): RebuildTrigger {
                 // DB-first (settings store), env fallback for the rebuild PAT.
                 $token = self::setting($c)?->getSecret('website-cms', 'rebuild_token');
@@ -68,8 +77,6 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
                 $ref = (string) (getenv('WEBSITE_REBUILD_REF') ?: 'main');
                 return new RebuildTrigger($token, $ref !== '' ? $ref : 'main');
             });
-        }
-        if ($c !== null && !$c->has(TranslationSync::class)) {
             $c->set(TranslationSync::class, static function ($c): TranslationSync {
                 $store = self::setting($c);
                 // DeepL key: settings store → WEBSITE_DEEPL_API_KEY → DEEPL_API_KEY.
