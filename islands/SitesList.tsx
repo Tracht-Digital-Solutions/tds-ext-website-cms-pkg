@@ -9,6 +9,14 @@ interface Site {
   name: string;
   rebuild_repo?: string | null;
   rebuild_workflow?: string | null;
+  /**
+   * Origin of the public site whose page cache a save rebuilds.
+   *
+   * Separate from the rebuild pair above and not interchangeable with it: those
+   * dispatch a CI build and ship code, this re-renders pages from content that
+   * is already stored.
+   */
+  cache_url?: string | null;
   updated_at: string;
 }
 
@@ -213,6 +221,17 @@ const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "ctaButton", label: "CTA-Button", type: "text" },
     { key: "back", label: "Zurück-Label", type: "text" },
   ],
+  // The legal pages. One markdown field rather than a structured schema:
+  // headings and lists are part of the text here, not a form somebody should
+  // have to fill in section by section. Leaving a block empty keeps the version
+  // committed in the site's repository — for a legal page that fallback is the
+  // point, since a silently blank privacy notice is worse than a stale one.
+  legal_impressum: [
+    { key: "markdown", label: "Impressum (Markdown)", type: "textarea" },
+  ],
+  legal_datenschutz: [
+    { key: "markdown", label: "Datenschutzerklärung (Markdown)", type: "textarea" },
+  ],
 };
 
 type Obj = Record<string, unknown>;
@@ -331,6 +350,8 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
   const [rebuildRepo, setRebuildRepo] = useState(site.rebuild_repo ?? "");
   const [rebuildWorkflow, setRebuildWorkflow] = useState(site.rebuild_workflow ?? "dev.yml");
   const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
+  const [cacheUrl, setCacheUrl] = useState(site.cache_url ?? "");
+  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
 
   const backfill = async () => {
@@ -430,7 +451,11 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
     const res = await api(`/cms/sites/${site.site_key}/rebuild-config`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ rebuild_repo: rebuildRepo.trim(), rebuild_workflow: rebuildWorkflow.trim() }),
+      body: JSON.stringify({
+        rebuild_repo: rebuildRepo.trim(),
+        rebuild_workflow: rebuildWorkflow.trim(),
+        cache_url: cacheUrl.trim(),
+      }),
     });
     if (res.ok) toast.success("Rebuild-Konfiguration gespeichert.");
     else toast.danger(`Rebuild-Konfiguration konnte nicht gespeichert werden (HTTP ${res.status}).`);
@@ -449,6 +474,27 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
     } else {
       setRebuildStatus(null);
       toast.danger(`Rebuild fehlgeschlagen (HTTP ${res.status}).`);
+    }
+  };
+
+  const rebuildCache = async () => {
+    setCacheStatus("Seiten-Cache wird neu gebaut …");
+    const res = await api(`/cms/sites/${site.site_key}/cache/rebuild`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ all: true }),
+    });
+    if (res.ok) {
+      setCacheStatus(null);
+      toast.success("Seiten-Cache wird neu gebaut.");
+    } else if (res.status === 422) {
+      // In the flow, not as a toast: this is a persistent configuration gap,
+      // and a vanishing message would leave the operator pressing a button
+      // that can never work.
+      setCacheStatus("Für diese Website ist keine Cache-URL hinterlegt.");
+    } else {
+      setCacheStatus(null);
+      toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -552,6 +598,32 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
         <div className="flex flex-wrap gap-2">
           <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
           <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
+        </div>
+      </div>
+
+      <div className="cms-editor__rebuild">
+        <h3>Seiten-Cache</h3>
+        <p className="marginalia">
+          Die öffentliche Website rendert auf Anfrage und legt jede Seite als Datei ab.
+          Ein Speichern baut den Cache der betroffenen Seiten automatisch neu — dieser
+          Knopf ist für den Fall, dass etwas dazwischenkam.
+          {" "}
+          <strong>Nicht dasselbe wie „Jetzt neu bauen"</strong>: das stößt einen CI-Build
+          an und liefert Code aus, der Cache-Neubau rendert in Sekunden aus bereits
+          gespeichertem Inhalt.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <input className="field-boxed"
+            value={cacheUrl}
+            onChange={(e) => setCacheUrl(e.target.value)}
+            placeholder="https://tracht-digital.de"
+            aria-label="Adresse der öffentlichen Website"
+          />
+        </div>
+        {cacheStatus ? <p className="tds-alert" role="status">{cacheStatus}</p> : null}
+        <div className="flex flex-wrap gap-2">
+          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Adresse speichern</button>
+          <button className="btn btn-accent" type="button" onClick={rebuildCache}>Seiten-Cache neu bauen</button>
         </div>
       </div>
     </div>
