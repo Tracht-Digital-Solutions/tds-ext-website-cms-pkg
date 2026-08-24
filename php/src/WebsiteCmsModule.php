@@ -358,7 +358,20 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             if ($repoName !== '' && preg_match('#^[\w.-]+/[\w.-]+$#', $repoName) !== 1) {
                 return self::json($res, ['error' => 'rebuild_repo must be "owner/name"'], 422);
             }
-            $repo->updateSiteRebuild((int) $site['id'], $repoName !== '' ? $repoName : null, $workflow !== '' ? $workflow : null);
+            // The page-cache origin lives on the same form. Validated as a real
+            // http(s) URL rather than accepted as typed: a half-pasted value
+            // would make every save log a failure nobody reads while the panel
+            // reported success.
+            $cacheUrl = trim((string) ($body['cache_url'] ?? ''));
+            if ($cacheUrl !== '' && preg_match('#^https?://\S+$#', $cacheUrl) !== 1) {
+                return self::json($res, ['error' => 'cache_url must be an http(s) URL'], 422);
+            }
+            $repo->updateSiteRebuild(
+                (int) $site['id'],
+                $repoName !== '' ? $repoName : null,
+                $workflow !== '' ? $workflow : null,
+                $cacheUrl !== '' ? rtrim($cacheUrl, '/') : null,
+            );
             return self::json($res, ['ok' => true]);
         });
 
