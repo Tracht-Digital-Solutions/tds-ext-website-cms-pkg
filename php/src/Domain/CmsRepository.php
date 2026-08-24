@@ -44,12 +44,21 @@ final class CmsRepository
         return $row === false ? null : $row;
     }
 
-    public function updateSiteRebuild(int $siteId, ?string $repo, ?string $workflow): void
+    /**
+     * The site's deploy hook and its page-cache origin.
+     *
+     * Two different jobs kept in one call because they are configured on one
+     * form: `repo`/`workflow` dispatch a CI build and ship code, `cacheUrl` is
+     * the origin a content save asks to re-render a page. Collapsing them into
+     * one setting would mean every typo correction went through a full build
+     * again — which is the thing the page cache exists to end.
+     */
+    public function updateSiteRebuild(int $siteId, ?string $repo, ?string $workflow, ?string $cacheUrl = null): void
     {
         $stmt = $this->pdo->prepare(
-            'UPDATE cms_site SET rebuild_repo = :r, rebuild_workflow = :w WHERE id = :id'
+            'UPDATE cms_site SET rebuild_repo = :r, rebuild_workflow = :w, cache_url = :c WHERE id = :id'
         );
-        $stmt->execute([':r' => $repo, ':w' => $workflow, ':id' => $siteId]);
+        $stmt->execute([':r' => $repo, ':w' => $workflow, ':c' => $cacheUrl, ':id' => $siteId]);
     }
 
     public function siteKeyExists(string $siteKey): bool

@@ -267,13 +267,14 @@ return [
             $site,
             ['in' => 'body', 'name' => 'rebuild_repo', 'type' => 'string', 'description' => 'Muss `owner/name` sein. Leer löscht.'],
             ['in' => 'body', 'name' => 'rebuild_workflow', 'type' => 'string', 'description' => 'Dateiname des Workflows.'],
+            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Herkunft der öffentlichen Site für den Seiten-Cache (z. B. `https://tracht-digital.de`). Leer löscht.'],
         ],
         'responses' => [
             ['status' => 200, 'description' => '`{ok: true}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
-            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`.'],
+            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine http(s)-URL.'],
         ],
     ],
     [
@@ -314,6 +315,29 @@ return [
             ['status' => 404, 'description' => 'Unbekannte Site.'],
             ['status' => 422, 'description' => 'Für diese Site ist kein Rebuild-Repository konfiguriert.'],
             ['status' => 503, 'description' => 'Kein Rebuild-Token konfiguriert.'],
+        ],
+    ],
+    [
+        'method' => 'POST',
+        'pattern' => '/cms/sites/{site:[a-z0-9-]+}/cache/rebuild',
+        'tag' => 'Rebuild',
+        'summary' => 'Seiten-Cache einer Site neu bauen',
+        'description' => 'Nicht zu verwechseln mit `/rebuild`: das stößt einen CI-Build an '
+            . 'und liefert Code aus, das hier rendert Seiten aus bereits gespeichertem '
+            . 'Inhalt neu — Sekunden statt Minuten, und der Weg, den eine Redakteurin '
+            . 'nimmt. Ohne `all` wird nur der Inhaltsteil erfasst, mit `all` zusätzlich '
+            . 'die Rechtsdokumente.',
+        'permission' => 'website:write',
+        'params' => [
+            $site,
+            ['in' => 'body', 'name' => 'all', 'type' => 'bool', 'description' => 'Alles erfassen statt nur die Inhaltsblöcke.'],
+        ],
+        'responses' => [
+            ['status' => 202, 'description' => '`{ok: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
+            ['status' => 401, 'description' => 'Keine Sitzung.'],
+            ['status' => 403, 'description' => 'Kein `website:write`.'],
+            ['status' => 404, 'description' => 'Unbekannte Site.'],
+            ['status' => 422, 'description' => 'Für diese Site ist keine Cache-URL konfiguriert.'],
         ],
     ],
 ];
