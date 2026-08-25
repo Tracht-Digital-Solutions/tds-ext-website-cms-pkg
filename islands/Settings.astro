@@ -1,10 +1,19 @@
 ---
 // Website-CMS settings section, rendered by the base Einstellungen host via
-// virtual:frontend-settings. Hosts the WebsiteSettings island, which reads/writes
-// the core runtime settings store (`/admin/settings/website-cms`): DeepL key,
-// auto-translate flag, and the rebuild token — DB-first, env fallback in the
-// backend. Secrets are stored AES-256-GCM-encrypted by the core.
+// virtual:frontend-settings.
+//
+// TWO islands, and the split is the point:
+//
+//   WebsiteSettings  the runtime settings store (`/admin/settings/website-cms`):
+//                    DeepL key, auto-translate flag, rebuild token, cache token.
+//                    Secrets are stored AES-256-GCM-encrypted by the core.
+//   SiteRegistry     the managed websites themselves — adding one, and saying
+//                    where its rebuild and its page cache point. This moved out
+//                    of the Website-CMS content screen: connecting a site is a
+//                    once-per-site act, editing its words is a daily one, and
+//                    the two had no business sharing a page.
 import WebsiteSettings from "./WebsiteSettings.tsx";
+import SiteRegistry from "./SiteRegistry.tsx";
 // HYDRATION: `client:visible`, not `client:load`. /einstellungen stacks seven
 // settings panels vertically and all but the first are below the fold; eager
 // hydration fired seven islands and seven settings fetches on load. The page
@@ -15,4 +24,12 @@ import WebsiteSettings from "./WebsiteSettings.tsx";
 <div class="tds-settings-section__body">
   <h3>Website-CMS</h3>
   <WebsiteSettings client:visible />
+
+  <h4>Websites</h4>
+  <p class="marginalia">
+    Hier werden Websites hinzugefügt. Die Inhalte selbst werden unter
+    <a class="link-underline" href="/website">Website-CMS</a> bearbeitet — dort wird
+    pro Seite ausgewählt, was geändert werden soll.
+  </p>
+  <SiteRegistry client:visible />
 </div>

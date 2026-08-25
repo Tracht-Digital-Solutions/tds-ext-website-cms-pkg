@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { primeRuntimeConfig } from "@tracht-digital-solutions/tds-shared/api";
+import { resetCache } from "@tracht-digital-solutions/tds-shared/data";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LegalDocs from "./LegalDocs";
@@ -38,6 +39,7 @@ const collectToast = (e: Event) => {
 };
 
 beforeEach(() => {
+  resetCache();
   toasts = [];
   window.addEventListener(TOAST_EVENT, collectToast);
   handlers = [];
@@ -61,6 +63,7 @@ beforeEach(() => {
 afterEach(() => {
   window.removeEventListener(TOAST_EVENT, collectToast);
   cleanup();
+  resetCache();
 });
 
 const user = () => userEvent.setup({ delay: null });
@@ -126,10 +129,11 @@ describe("listing", () => {
     expect(link.rel).toContain("noopener");
   });
 
-  it("degrades to an empty list rather than throwing when the API is down", async () => {
+  it("shows the failure instead of pretending the document list is empty", async () => {
     respond(/\/cms\/sites\/landing\/legal$/, { error: "boom" }, 500);
     render(<LegalDocs siteKey="landing" />);
-    expect(await screen.findByText(/Noch keine Dokumente/)).toBeTruthy();
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("500"));
+    expect(screen.queryByText(/Noch keine Dokumente/)).toBeNull();
   });
 });
 

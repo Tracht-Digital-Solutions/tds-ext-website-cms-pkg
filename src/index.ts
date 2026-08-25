@@ -1,15 +1,15 @@
 import { defineExtension } from "@tracht-digital-solutions/tds-frontend-contract";
 
 /**
- * Website-CMS extension — build-time content management for the public sites,
- * ported from tds-content-api's `/landing` content-block model. Edits editable
- * website sections (stored as one JSON block per site × section × language); the
- * static sites fetch these at build time and merge them over their tds-shared /
- * local defaults, so a missing block falls back to the default.
+ * Website-CMS extension — request-time content management for public sites,
+ * ported from tds-content-api's `/landing` content-block model. Edits website
+ * sections stored as one JSON block per site × section × language; public sites
+ * merge these over local defaults and refresh affected page-cache entries after
+ * a save, so a missing block remains a working default.
  *
- * "1:n websites": a `cms_site` registry lets one panel manage several sites;
- * blocks are scoped to a site. `website:read`/`website:write` gate it (admins
- * bypass).
+ * A `cms_site` registry lets one panel manage several sites. Registration and
+ * cache/CI configuration live under Settings; the CMS screen only selects a
+ * site, page and section for editing. `website:read`/`website:write` gate it.
  */
 export default defineExtension({
   id: "website-cms",

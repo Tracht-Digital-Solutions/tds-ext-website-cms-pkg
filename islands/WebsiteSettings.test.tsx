@@ -61,6 +61,7 @@ const CONFIGURED = {
   settings: [
     { key: "deepl_api_key", secret: true, configured: true, last4: "cd34" },
     { key: "rebuild_token", secret: true, configured: true, last4: "ef56" },
+    { key: "cache_token", secret: true, configured: true, last4: "gh78" },
     { key: "auto_translate", secret: false, value: "1" },
   ],
 };
@@ -109,6 +110,7 @@ describe("loading", () => {
     await renderSettings();
     expect(await screen.findByText(/konfiguriert \(…cd34\)/)).toBeTruthy();
     expect(screen.getByText(/konfiguriert \(…ef56\)/)).toBeTruthy();
+    expect(screen.getByText(/konfiguriert \(…gh78\)/)).toBeTruthy();
   });
 
   it("leaves the secret inputs empty even when a secret is configured", async () => {
@@ -129,7 +131,8 @@ describe("loading", () => {
 
   it("reports an unconfigured secret plainly", async () => {
     await renderSettings();
-    expect(await screen.findAllByText(/nicht konfiguriert/)).toHaveLength(2);
+    // Three secrets: DeepL, the CI rebuild token, and the page-cache token.
+    expect(await screen.findAllByText(/nicht konfiguriert/)).toHaveLength(3);
   });
 
   it("falls back to ???? when a configured secret has no last4", async () => {
@@ -193,12 +196,12 @@ describe("auto-translate", () => {
 });
 
 describe("saving", () => {
-  it("PUTs all three keys to the namespace", async () => {
+  it("PUTs every key to the namespace", async () => {
     await renderSettings();
     await user().click(await screen.findByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(put()).toBeDefined());
     expect(pathOf(put()!.url)).toBe(NS);
-    expect(sent().map((s) => s.key).sort()).toEqual(["auto_translate", "deepl_api_key", "rebuild_token"]);
+    expect(sent().map((s) => s.key).sort()).toEqual(["auto_translate", "cache_token", "deepl_api_key", "rebuild_token"]);
   });
 
   it("sends a blank secret when the admin did not retype one — meaning KEEP", async () => {
@@ -218,7 +221,14 @@ describe("saving", () => {
     await user().click(await screen.findByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(put()).toBeDefined());
     const bySecret = Object.fromEntries(sent().map((s) => [s.key, s.secret]));
-    expect(bySecret).toEqual({ deepl_api_key: true, rebuild_token: true, auto_translate: false });
+    expect(bySecret).toEqual({
+      deepl_api_key: true,
+      rebuild_token: true,
+      // The page-cache token authenticates a render request against a PUBLIC
+      // host, so it is a secret like the other two.
+      cache_token: true,
+      auto_translate: false,
+    });
   });
 
   it("trims a pasted key so a stray newline cannot break the API call", async () => {

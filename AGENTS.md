@@ -5,20 +5,26 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 
 ## Model
 
-- **Build-time content**, not runtime: `cms_block` rows (one per site × section ×
-  language, `value_json`) are read by the static sites at build time and merged
-  over defaults; a missing row falls back. Never fetch this from the client at
-  runtime (same rule as content-api).
+- **Request-rendered content behind a file/page cache**, never a browser-side
+  content fetch: `cms_block` rows (one per site × section × language,
+  `value_json`) are read by the public site's server while rendering and merged
+  over defaults; a missing row falls back. A mutation sends semantic
+  `CacheEvent`s so that site can rebuild only the affected pages/partials.
 - **Legal documents are the same model with bytes instead of JSON.**
   `cms_legal_doc` (one per site × `doc_key` × language) holds an uploaded PDF —
-  the AGB today. There is no text to edit and no default to merge over: the
-  uploaded file *is* the document, the public site downloads it at build time
-  and bakes it into `dist/`, and an upload fires the site's rebuild.
+  the AGB today. There is no text to edit: the uploaded file *is* the managed
+  document. The public server reads it while rendering; the landingpage may use
+  a committed fallback when no upload exists. Upload/delete sends a targeted
+  legal-document cache event, not a CI build.
 - **1:n sites:** the `cms_site` registry scopes blocks. `cms_block.site_id` FK →
   `cms_site` (CASCADE). Unique `(site_id, section_key, lang)`.
+- **Registration/configuration lives only under Einstellungen → Website-CMS.**
+  `/website` is the daily content screen: choose site → page → section → DE/EN.
+  Known pages/sections and both languages must remain selectable before a row
+  exists, so an editor can create the first override (`Vorgabe`).
 - **Auth via the core `UserContext`** — `website:read`/`website:write` (admins
   bypass). Blocks are upserted (PUT, `ON DUPLICATE KEY`).
-- Denormalised JSON on purpose (small, read once per build, shapes differ per
+- Denormalised JSON on purpose (small, read once per render/cache fill, shapes differ per
   section) — the API validator owns shape correctness.
 
 ## Gotchas
@@ -45,7 +51,8 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   Reading the CMS worked; `PUT /cms/{site}/blocks/{key}`, the delete and the
   translation backfill answered **500**, and the settings-store factories (DeepL
   key, rebuild PAT) had never run once — so those panel settings were dead too.
-  Nothing anywhere went red: this repo's CI runs type-check + build, not tests;
+  Nothing anywhere went red at the time: this repo's CI ran type-check + build,
+  not tests;
   the composed API's `CompositionTest` only checks that routes are *mounted*; and
   a PHP-DI entry is built lazily, so a broken binding costs nothing until
   somebody saves. The module owns these classes and nothing else defines them,
@@ -72,15 +79,17 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 
 - **Public read surface (UNAUTHENTICATED).** Alongside the admin (`website:read`/
   `website:write`) routes, this module serves the successor to tds-content-api's
-  open `GET /content/landing` that the public landingpage + blog SSG builds fetch:
+  open `GET /content/landing` that the public landingpage + blog servers read
+  while rendering:
   it returns the **default site**'s (`defaultSite()`) content blocks for a language
   as a `{blocks: {section_key: value}}` map (landing sections + the blog's
   `cookie_banner`/`ads` config blocks). **Degrades to `{blocks:{}}` on any DB
-  error** (build-fetch fail-safe) — keep it read-only and ungated.
+  error** (render-time fail-safe) — keep it read-only and ungated.
 - **A legal document's bytes live in the DB, not on disk** — deliberately
   different from `tds-ext-documents-pkg`, which stores customer documents under
   `DOCUMENT_ROOT_DIR`. These are a handful of small files (8 MB cap, the real
-  AGB is ~90 KB) read once per build; a `MEDIUMBLOB` needs no new writable
+  AGB is ~90 KB) read only for a render/cache fill; a `MEDIUMBLOB` needs no new
+  writable
   directory on the Plesk host, and host-side setup is this platform's chronic
   go-live blocker. Every metadata query therefore names its columns instead of
   `SELECT *`, so listing documents does not drag the blobs through PHP.
@@ -109,10 +118,28 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   survive an edit. Replacing instead of spreading silently blanks live landing
   page content on the next save — covered by two tests that fail on exactly that
   mutation.
+- **SWR must stay visibly stale and must never erase usable data or typing.**
+  `useCachedJson` + `staleClass` show the previous result immediately, including
+  when a refresh fails. A cached-data refresh failure needs an error banner and
+  stale styling; it is not an empty state. Prop-to-editor sync may update an
+  untouched form, but a dirty guard must keep an in-flight response from
+  clobbering unsaved input. Mutations call `invalidate()` for the affected cache
+  family while keeping a saved local seed.
+- **`cache_url` carries a secret-bearing request and is an origin, not an
+  arbitrary URL.** `CacheOrigin::normalize()` accepts only `http`/`https` with
+  no userinfo, path (apart from `/`), query or fragment. Validate both at config
+  write time and again in `fireCache()` so legacy/manual DB rows cannot receive
+  the token. The core `SiteCache` transport must not follow redirects with the
+  secret. Do not weaken either boundary.
+- **Cache outcomes are factual.** `fireCache()` returns whether a request was
+  actually sent; mutation responses expose it as `cached`. Missing per-site URL
+  is a 422 for the manual endpoint, missing shared token/service is a 503, and a
+  content save still succeeds with `cached:false`. Never toast “neu gebaut” from
+  `res.ok` alone.
 - **Outcomes are toasts; configuration problems and validation are not.** Block
   saves, the rebuild trigger and the translation backfill report through `toast`
-  (tds-shared `>=0.16.0`). The 503 "DeepL not configured" / 503 "no rebuild
-  token" / 422 "no repository" replies stay in the in-flow banner — they name
+  (tds-shared `>=0.33.0`). The 503 "DeepL not configured" / 503 "no rebuild or
+  cache token" / 422 "no repository/origin" replies stay in the in-flow banner — they name
   something an operator has to go and set — as does JSON/section-key validation.
   That banner is `.tds-alert--danger` now, since failures are all it carries.
   Never mount a `ToastHost` here; the frontend host owns the only one.
@@ -124,8 +151,9 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   fail when a route gains or loses documentation.
 - **The suites used to run against a tds-shared a dozen minors old, and the
   first honest run cost 30 failures across the twelve shipping extensions.**
-  This package declares tds-shared as a **peer** with a `>=0.19.0` floor, so a
-  fresh install resolved 0.19.0 while every product build composes the current
+  This package declares tds-shared as a **peer** with a `>=0.33.0` floor (needed
+  for the `data` cache exports), after an older floor let a fresh install resolve
+  an incompatible version while every product build composed the current
   one. Three separate behaviours had moved underneath the tests, and each is
   worth knowing because a new suite will hit them again:
   - `apiFetch` consults the host-side runtime config (`/tds-runtime.json`)
@@ -150,6 +178,11 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
   typed fields round-trip (number stays a number, a cleared number becomes
   `null`, a checkbox stays boolean), and a hand-broken stored value (`null`,
   an array, a non-object) degrades instead of white-screening the editor.
+- `islands/SiteRegistry.test.tsx` — registration/configuration under Settings,
+  truthful manual-cache failures, and SWR prop synchronisation without losing
+  edits.
+- `islands/sections.test.ts` — known page/section ordering, first-block creation,
+  DE/EN defaults, shared sections and preservation of unknown stored sections.
 - `islands/WebsiteSettings.test.tsx` — the masked-secret contract: a secret
   never round-trips to the DOM, and a **blank** secret on save means *keep*, so
   toggling auto-translate cannot wipe the DeepL key.
@@ -161,6 +194,9 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 - `src/index.test.ts` + `tests/packaging.test.ts` — the manifest as a product
   build sees it, and that every specifier resolves to a real file that is both
   covered by `exports` and inside the published `files` list.
+- `php/tests/WebsiteCmsCacheTest.php` — strict cache-origin validation, send-time
+  revalidation/token containment, truthful no-token handling and `cache_url` in
+  the site query contract.
 
 Note: `userEvent.type()` parses `{` and `[` as key syntax, so the JSON textarea
 is driven with `paste()` (see the `setJson` helper) — typing raw JSON silently
@@ -171,19 +207,19 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
 ## Checkpoint status
 
 - **CP1:** `cms_site` + `cms_block` schema, `Domain\CmsRepository`, site + block
-  CRUD (`/cms/*`) with RBAC, the sites widget + list/add-site UI.
+  CRUD (`/cms/*`) with RBAC and the sites widget.
 - **CP2:** the per-site **block editor UI** (`SiteEditor` in `islands/SitesList.tsx`)
-  — list a site's blocks, open one (section-key + lang → GET), edit its JSON in a
-  textarea with parse + object validation, save via PUT.
-- **CP3:** save-triggered **static-site rebuild**. `Service\RebuildTrigger` (plain
-  ext-curl, best-effort, never throws) fires a GitHub `workflow_dispatch` after a
-  block save/delete. Per-site target lives on `cms_site` (`rebuild_repo` "owner/name"
+  — choose a site's page and section, edit a typed form or raw JSON, then save via
+  PUT. Known pages/sections and DE/EN remain available without stored rows.
+- **CP3:** explicit **manual CI rebuild**. `Service\RebuildTrigger` (plain
+  ext-curl, best-effort, never throws) fires GitHub `workflow_dispatch` only from
+  the manual endpoint. Per-site target lives on `cms_site` (`rebuild_repo` "owner/name"
   + `rebuild_workflow`, defaulting `dev.yml`), edited via `PUT /cms/sites/{site}/
   rebuild-config`; the shared PAT comes from `WEBSITE_REBUILD_TOKEN` (one PAT
   dispatches every site repo; unset ⇒ no-op). `POST /cms/sites/{site}/rebuild` is a
   manual "Jetzt neu bauen" (503 no token / 422 no repo). Sends `ref` only — the
-  dispatches endpoint 422s on inputs a workflow doesn't declare. UI: a
-  Rebuild-Konfiguration block in the SiteEditor.
+  dispatches endpoint 422s on inputs a workflow doesn't declare. Content
+  mutations never dispatch CI; this path is for code/design deployments.
 - **CP4:** **DeepL auto-translation** of blocks (save-time sync, ported from
   tds-content-api). `cms_block.machine_translated` flags auto-generated rows. On a
   block save, `Service\TranslationSync` extracts the human-copy leaves via
@@ -198,16 +234,18 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
   backfill button. Writes go through the repo (never the route) so the sync can't
   ping-pong. Mirror of blog-cms CP4.
 - **CP5:** **runtime settings store adoption** (mirror of blog-cms CP8). The DeepL
-  key + auto-translate flag + rebuild token are read **DB-first with env fallback**
+  key + auto-translate flag + rebuild token + page-cache token are read
+  **DB-first with env fallback**
   via the core's `SettingsStore` (contract interface, resolved from the container;
   null in isolated tests ⇒ env-only). Namespace `website-cms`, keys
-  `deepl_api_key`/`rebuild_token` (secret, AES-GCM by the core) + `auto_translate`.
+  `deepl_api_key`/`rebuild_token`/`cache_token` (secret, AES-GCM by the core) +
+  `auto_translate`.
   The settings slot (`islands/Settings.astro` → `WebsiteSettings`) reads/writes the
   core admin API `/admin/settings/website-cms` (masked; blank secret = keep). Env
   vars (`WEBSITE_DEEPL_API_KEY`/`DEEPL_API_KEY`, `WEBSITE_AUTO_TRANSLATE`,
-  `WEBSITE_REBUILD_TOKEN`) remain the fallback.
+  `WEBSITE_REBUILD_TOKEN`, `WEBSITE_CACHE_TOKEN`) remain the fallback.
 - **CP6:** **per-section structured forms.** Known section keys (`hero`, `about`,
-  `services`, `faq` — extend `SECTION_SCHEMAS` in `islands/SitesList.tsx`) render
+  `services`, `faq` — extend `SECTION_SCHEMAS` in `islands/sections.ts`) render
   typed fields (text/textarea + repeatable object lists like faq `items:[{q,a}]`)
   instead of raw JSON; unknown sections fall back to the JSON editor. A **Form/JSON
   toggle** is always available (known sections open in Form). The editor keeps a
@@ -227,8 +265,8 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
   `{number,title,duration,description,detail,outcome}`). Partial schemas stay safe —
   unlisted keys are preserved. When adding a section, copy its shape from the
   landingpage component's `cmsFor("<key>", …, {…default…})` call.
-- **CP8:** added `consulting`, `footer`, and `pricing` schemas — **all landingpage
-  sections now have structured forms.** `pricing` needed richer field types, so the
+- **CP8:** added `consulting`, `footer`, `pricing`, `tech`, `journal`, `portfolio`
+  and `cookie_banner` schemas. `pricing` needed richer field types, so the
   form system grew `number` + `checkbox` leaf types and a `stringlist` field (array
   of plain strings, e.g. pricing `includes`/`notes`) — usable both top-level and as
   an item field inside an object list (pricing `items[].includes`). `LeafInput` now
@@ -239,12 +277,21 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
   `Support\LegalDocFile` + admin CRUD + the public `GET /content/legal` and
   `GET /content/legal/{key}.pdf`, driven by `islands/LegalDocs.tsx` in the site
   editor. Built for the landingpage's AGB page (`/legal/agb` +
-  `/legal/agb.pdf`, DE and EN), which downloads the document at build time and
+  `/legal/agb.pdf`, DE and EN), which reads the document while rendering and
   falls back to a committed copy so the link is never dead. Legal text is **not**
   machine-translated — unlike blocks, the EN document is a separate upload, and
   `TranslationSync` does not see these rows at all.
-- **TODO (next):** nothing outstanding for the structured forms — extend
-  `SECTION_SCHEMAS` if a site introduces a new section shape.
+- **CP10:** **settings-only registry, semantic page model and targeted page
+  cache.** `SiteRegistry` is mounted only from `Settings.astro`; the content
+  screen resolves known pages/sections via `islands/sections.ts`. `cache_url`
+  plus the `SiteCache` contract sends `CacheEvent('block', …)` /
+  `CacheEvent('legal', …)` on mutations; API responses carry `cached` for honest
+  UI status. Reads use shared SWR with visible stale/error state and dirty-editor
+  guards. The contract dependency is `^1.10.0`; the shared data peer floor is
+  `>=0.33.0`.
+- **TODO:** extend `SECTION_SCHEMAS` and `PAGES` together if a site introduces a
+  new known section or page. Unknown stored sections remain editable under
+  “Weitere Abschnitte”.
 
 ## After a change
 
@@ -298,11 +345,12 @@ by `"<METHOD> <pattern>"`. Two things to know before editing a route:
 
 This module implements the contract's optional `SiteKeyProtected` and declares
 `/content/landing`, `/content/legal` — what the public landingpage reads at
-**build time**, and the only routes the base's site-key middleware may gate.
+**server render/cache-fill time**, and the only routes the base's site-key
+middleware may gate.
 
 - `/content/legal` covers `/content/legal/{key}.pdf` too, deliberately: the same
-  build step fetches both, and the landingpage keeps a committed fallback PDF for
-  exactly the case where it cannot be reached.
+  server integration fetches both, and the landingpage keeps a committed
+  fallback PDF for exactly the case where it cannot be reached.
 - **Never widen to `/content`.** That would swallow blog-cms's routes as well —
   one module gating another's surface, and silently ceasing to the day blog-cms
   renames a path.

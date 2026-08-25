@@ -13,6 +13,7 @@ use Tds\Ext\WebsiteCms\Service\DeeplTranslator;
 use Tds\Ext\WebsiteCms\Service\RebuildTrigger;
 use Tds\Ext\WebsiteCms\Service\TranslatableJsonWalker;
 use Tds\Ext\WebsiteCms\Service\TranslationSync;
+use Tds\Ext\WebsiteCms\Support\CacheOrigin;
 use Tds\Ext\WebsiteCms\Support\LegalDocFile;
 use Psr\Container\ContainerInterface;
 use Tds\Frontend\Contract\AbstractModule;
@@ -25,11 +26,9 @@ use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
 
 /**
- * Backend Module for the Website-CMS (checkpoint-1: site registry + per-(site,
- * section, lang) JSON content-block CRUD + the sites widget summary). Auth via
- * the core UserContext (`website:read`/`website:write`, admins bypass); data via
- * the core PDO. A save triggering a static-site rebuild (workflow_dispatch) lands
- * in a later checkpoint.
+ * Backend module for the Website-CMS: site registry, structured per-site content,
+ * legal documents and targeted page-cache refreshes. Auth uses the core
+ * UserContext (`website:read`/`website:write`, admins bypass); data uses core PDO.
  */
 final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, SiteKeyProtected
 {
@@ -99,14 +98,13 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
         }
 
         // --- Public read surface (UNAUTHENTICATED) --------------------------
-        // The successor to tds-content-api's open `GET /content/landing` that the
-        // public landingpage + blog SSG builds fetch at build time (landing
-        // sections, plus the blog's cookie_banner + ads config blocks). Serves
-        // the single default site's blocks for a language as a section→value map.
-        // The ONLY ungated route in this module; keep it read-only.
+        // The successor to tds-content-api's open `GET /content/landing`, read by
+        // the public landingpage and blog while rendering (landing sections plus
+        // the blog's cookie_banner + ads config blocks). Serves the single default
+        // site's blocks for a language as a section→value map. Keep it read-only.
         $app->get('/content/landing', function (Request $req, Response $res) use ($c): Response {
-            // Graceful for a build-fetch: any DB hiccup returns no blocks so the
-            // public build falls back to its baked defaults, never a 500.
+            // Graceful request-time fallback: any DB hiccup returns no blocks so
+            // the public site uses its in-code defaults, never a 500.
             try {
                 $repo = $c->get(CmsRepository::class);
                 $site = $repo->defaultSite();
@@ -119,9 +117,9 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
         });
 
         // Public legal-document metadata: which uploaded PDFs exist for the
-        // default site, per key and language. The landingpage build reads this
-        // to decide whether to bake the uploaded AGB or its committed fallback,
-        // and to render the "Stand: …" label. Same fail-safe as /content/landing.
+        // default site, per key and language. The landingpage reads this while
+        // rendering to select the uploaded AGB or its committed fallback and to
+        // render the "Stand: …" label. Same fail-safe as /content/landing.
         $app->get('/content/legal', function (Request $req, Response $res) use ($c): Response {
             try {
                 $repo = $c->get(CmsRepository::class);
@@ -140,7 +138,7 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             }
         });
 
-        // Public document bytes — what the landingpage build downloads and what
+        // Public document bytes — what the landingpage loads while rendering and what
         // a visitor's browser would hit directly. Read-only and ungated, like
         // /content/landing; a missing document is a 404, never a 500.
         $app->get('/content/legal/{key:[a-z0-9-]+}.pdf', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -215,9 +213,8 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
                 $bytes,
                 $label !== '' ? substr($label, 0, 128) : null,
             );
-            self::fireRebuild($c->get(RebuildTrigger::class), $site, 'legal doc ' . $key . ' (' . $lang . ') uploaded');
-            self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
-            return self::json($res, ['ok' => true], 201);
+            $cached = self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
+            return self::json($res, ['ok' => true, 'cached' => $cached], 201);
         });
 
         $app->delete('/cms/sites/{site:[a-z0-9-]+}/legal/{key:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -234,9 +231,8 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             if (!$repo->deleteLegalDoc((int) $site['id'], $key, $lang)) {
                 return self::json($res, ['error' => 'Not found'], 404);
             }
-            self::fireRebuild($c->get(RebuildTrigger::class), $site, 'legal doc ' . $key . ' (' . $lang . ') deleted');
-            self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
-            return self::json($res, ['ok' => true]);
+            $cached = self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
+            return self::json($res, ['ok' => true, 'cached' => $cached]);
         });
 
         // Admin preview of the stored bytes (the public route only ever serves
@@ -332,17 +328,19 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             $repo->putBlock((int) $site['id'], (string) $args['key'], $lang, json_encode($body['value'], JSON_THROW_ON_ERROR), false);
             // Auto-translate the counterpart language (best-effort).
             $translated = $c->get(TranslationSync::class)->afterSave((int) $site['id'], (string) $args['key'], $lang, $body['value']);
-            self::fireRebuild($c->get(RebuildTrigger::class), $site, 'block ' . (string) $args['key'] . ' saved');
             // Both languages when the counterpart was machine-translated in the
             // same call: the English page changed too, and rebuilding only the
             // saved language leaves it showing the previous translation.
-            self::fireCache($c, $site, $translated
+            $cached = self::fireCache($c, $site, $translated
                 ? [new CacheEvent('block', (string) $args['key'])]
                 : [new CacheEvent('block', (string) $args['key'], $lang)]);
-            return self::json($res, ['ok' => true, 'translated' => $translated]);
+            // `cached` reports whether the affected PAGES were actually asked
+            // to re-render — which is what the editor needs to say after a
+            // save, and the one thing it cannot work out for itself.
+            return self::json($res, ['ok' => true, 'translated' => $translated, 'cached' => $cached]);
         });
 
-        // Set a site's rebuild target (repo/workflow); blank clears it.
+        // Set a site's manual CI target and page-cache origin; blank clears it.
         $app->put('/cms/sites/{site:[a-z0-9-]+}/rebuild-config', function (Request $req, Response $res, array $args) use ($c): Response {
             if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
                 return $deny;
@@ -358,19 +356,19 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             if ($repoName !== '' && preg_match('#^[\w.-]+/[\w.-]+$#', $repoName) !== 1) {
                 return self::json($res, ['error' => 'rebuild_repo must be "owner/name"'], 422);
             }
-            // The page-cache origin lives on the same form. Validated as a real
-            // http(s) URL rather than accepted as typed: a half-pasted value
-            // would make every save log a failure nobody reads while the panel
-            // reported success.
-            $cacheUrl = trim((string) ($body['cache_url'] ?? ''));
-            if ($cacheUrl !== '' && preg_match('#^https?://\S+$#', $cacheUrl) !== 1) {
-                return self::json($res, ['error' => 'cache_url must be an http(s) URL'], 422);
+            // The page-cache token is sent to this address. Accept a pure origin
+            // only: userinfo could disclose the token, while path/query/fragment
+            // would silently target something other than the cache endpoint.
+            $rawCacheUrl = trim((string) ($body['cache_url'] ?? ''));
+            $cacheUrl = $rawCacheUrl === '' ? null : CacheOrigin::normalize($rawCacheUrl);
+            if ($rawCacheUrl !== '' && $cacheUrl === null) {
+                return self::json($res, ['error' => 'cache_url must be an http(s) origin without credentials, path, query or fragment'], 422);
             }
             $repo->updateSiteRebuild(
                 (int) $site['id'],
                 $repoName !== '' ? $repoName : null,
                 $workflow !== '' ? $workflow : null,
-                $cacheUrl !== '' ? rtrim($cacheUrl, '/') : null,
+                $cacheUrl,
             );
             return self::json($res, ['ok' => true]);
         });
@@ -410,15 +408,20 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             if ($site === null) {
                 return self::json($res, ['error' => 'Site not found'], 404);
             }
-            if (trim((string) ($site['cache_url'] ?? '')) === '') {
+            if (CacheOrigin::normalize((string) ($site['cache_url'] ?? '')) === null) {
                 // Said in the flow rather than reported as a cheerful success:
                 // a rebuild nobody sent looks exactly like one that worked.
-                return self::json($res, ['error' => 'No cache URL configured for this site'], 422);
+                return self::json($res, ['error' => 'No valid cache origin configured for this site'], 422);
             }
             $body = (array) $req->getParsedBody();
             $all = !empty($body['all']);
-            self::fireCache($c, $site, $all ? [] : [new CacheEvent('block')], $all);
-            return self::json($res, ['ok' => true], 202);
+            if (!self::fireCache($c, $site, $all ? [] : [new CacheEvent('block')], $all)) {
+                // The URL has its own 422 above. Reaching this branch means the
+                // shared token (or an older base without SiteCache) is missing,
+                // which is a persistent operator action rather than success.
+                return self::json($res, ['error' => 'Cache token or cache service not configured'], 503);
+            }
+            return self::json($res, ['ok' => true, 'cached' => true], 202);
         });
 
         $app->delete('/cms/{site:[a-z0-9-]+}/blocks/{key:[a-z0-9_-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -434,9 +437,8 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             $repo->deleteBlock((int) $site['id'], (string) $args['key'], $lang);
             // A machine-translated counterpart was derived from this block — drop it too.
             $c->get(TranslationSync::class)->afterDelete((int) $site['id'], (string) $args['key'], $lang);
-            self::fireRebuild($c->get(RebuildTrigger::class), $site, 'block ' . (string) $args['key'] . ' deleted');
-            self::fireCache($c, $site, [new CacheEvent('block', (string) $args['key'])]);
-            return self::json($res, ['ok' => true]);
+            $cached = self::fireCache($c, $site, [new CacheEvent('block', (string) $args['key'])]);
+            return self::json($res, ['ok' => true, 'cached' => $cached]);
         });
 
         // Catch up translations for a site's existing blocks (button in tds-admin).
@@ -465,17 +467,15 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
                 $wrote = $sync->afterSave((int) $site['id'], (string) $meta['section_key'], (string) $meta['lang'], $value);
                 $wrote ? $created++ : $skipped++;
             }
-            if ($created > 0) {
-                self::fireRebuild($c->get(RebuildTrigger::class), $site, 'translation backfill');
-                self::fireCache($c, $site, [new CacheEvent('block')]);
-            }
-            return self::json($res, ['created' => $created, 'skipped' => $skipped]);
+            $cached = $created > 0
+                ? self::fireCache($c, $site, [new CacheEvent('block')])
+                : false;
+            return self::json($res, ['created' => $created, 'skipped' => $skipped, 'cached' => $cached]);
         });
     }
 
     // --- helpers ---------------------------------------------------------------
 
-    /** @param array<string,mixed> $site */
     /**
      * Ask a site to re-render the pages a content change affects.
      *
@@ -488,31 +488,55 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
      * same check always answers true (PHP-DI autowires), which is the trap
      * this module's own binding comment documents.
      *
+     * Returns whether a request actually went out, so a caller can tell the
+     * operator the truth. Saying "Seiten-Cache wird neu gebaut" on a site with
+     * no cache URL is the cheerful-success-for-a-request-nobody-sent failure
+     * this codebase keeps re-learning; the boolean is what lets the panel say
+     * "gespeichert, aber kein Seiten-Cache hinterlegt" instead.
+     *
+     * @param array<string,mixed> $site
      * @param CacheEvent[] $events
      */
-    private static function fireCache(ContainerInterface $c, array $site, array $events, bool $all = false): void
+    private static function fireCache(ContainerInterface $c, array $site, array $events, bool $all = false): bool
     {
-        if (!$c->has(SiteCache::class)) {
-            return;
-        }
-        $url = trim((string) ($site['cache_url'] ?? ''));
-        if ($url === '') {
-            return;
-        }
-        $token = self::setting($c)?->getSecret('website-cms', 'cache_token');
-        if ($token === null || $token === '') {
-            $token = (string) (getenv('WEBSITE_CACHE_TOKEN') ?: '');
-        }
+        try {
+            if (!$c->has(SiteCache::class)) {
+                return false;
+            }
+            // Validate again at the secret-bearing send boundary. This also protects
+            // rows written before strict validation existed (or by manual SQL).
+            $url = CacheOrigin::normalize((string) ($site['cache_url'] ?? ''));
+            if ($url === null) {
+                return false;
+            }
+            $token = self::setting($c)?->getSecret('website-cms', 'cache_token');
+            if ($token === null || $token === '') {
+                $token = (string) (getenv('WEBSITE_CACHE_TOKEN') ?: '');
+            }
 
-        // "Everything" is expressed as one event per type with no id, which the
-        // site expands into its own entry points. The alternative — sending a
-        // path list — would put this module's idea of another repo's URLs into
-        // the payload, which is exactly what CacheEvent exists to avoid.
-        $payload = $all
-            ? [new CacheEvent('block'), new CacheEvent('legal')]
-            : $events;
+            // "Everything" is expressed as one event per type with no id, which the
+            // site expands into its own entry points. The alternative — sending a
+            // path list — would put this module's idea of another repo's URLs into
+            // the payload, which is exactly what CacheEvent exists to avoid.
+            $payload = $all
+                ? [new CacheEvent('block'), new CacheEvent('legal')]
+                : $events;
 
-        $c->get(SiteCache::class)->rebuild($url, $token, $payload);
+            $cache = $c->get(SiteCache::class);
+            // Ask before sending: `rebuild()` is a documented no-op without a
+            // token, and a no-op reported as a rebuild is the same lie as above.
+            if (!$cache->isConfigured($url, $token)) {
+                return false;
+            }
+            $cache->rebuild($url, $token, $payload);
+
+            return true;
+        } catch (\Throwable $e) {
+            // Cache refresh is best-effort and must never turn an already-saved
+            // content mutation into a 500. Never include the token in this log.
+            error_log('[website-cms] page-cache request failed: ' . $e->getMessage());
+            return false;
+        }
     }
 
     private static function fireRebuild(RebuildTrigger $trigger, array $site, string $reason): void
@@ -601,12 +625,13 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
     }
 
     /**
-     * The routes the public landingpage reads at BUILD time.
+     * The routes the public landingpage reads while rendering.
      *
      * `/content/legal` covers the PDF endpoint under it as well
      * (`/content/legal/{key}.pdf`), and that is deliberate: it is fetched by the
-     * same build step that fetches the listing, and the landingpage keeps a
-     * committed fallback PDF for exactly the case where it cannot be reached.
+     * same request-time integration that fetches the listing, and the
+     * landingpage keeps a committed fallback PDF for exactly the case where it
+     * cannot be reached.
      *
      * Only this module's routes are listed. `/content` as a prefix would also
      * swallow blog-cms's, i.e. one module gating another's surface — and it

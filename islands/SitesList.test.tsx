@@ -1,30 +1,36 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { primeRuntimeConfig } from "@tracht-digital-solutions/tds-shared/api";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { put, resetCache } from "@tracht-digital-solutions/tds-shared/data";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import SitesList from "./SitesList";
 import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
 
 /**
- * The website-CMS island. Its risky part is the structured form ↔ raw JSON
- * bridge: a block is one JSON object per site × section × language, the form
- * only knows the fields in `SECTION_SCHEMAS`, and the public sites merge the
- * saved block over their defaults. So the invariant that matters is that
- * editing through the form never SILENTLY DROPS keys the schema does not list —
- * that would blank parts of the live landing page.
+ * The website-CMS CONTENT screen: pick a website, pick a page, edit a section.
+ *
+ * Three things here are worth a test and the rest is plumbing:
+ *
+ *  - **Adding a site is gone from this screen.** It moved to Einstellungen, and
+ *    the empty state has to SAY so — an empty screen with no way forward is
+ *    worse than the form it replaced.
+ *  - **The form ↔ JSON bridge must never silently drop keys** the schema does
+ *    not list. A block is merged over the public site's defaults, so a dropped
+ *    key blanks part of the live landing page with nothing red anywhere.
+ *  - **The save message must not claim a rebuild that did not happen.** The API
+ *    reports `cached`; inferring it from `ok` is the cheerful-success-for-a-
+ *    request-nobody-sent failure.
  */
 
 type Hit = { status?: number; body?: unknown };
 let handlers: Array<(url: string, init?: RequestInit) => Hit | undefined> = [];
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 
-
 /**
- * Path + query of a request. The island calls an ABSOLUTE URL now (via
- * `apiFetch`); a relative one would hit the product's own static host and come
- * back as SPA-fallback HTML with a 200. Matching on the path keeps the route
- * matchers below anchored.
+ * Path + query of a request. The island calls an ABSOLUTE URL (via `apiFetch`);
+ * a relative one would hit the product's own host and come back as SPA-fallback
+ * HTML with a 200. Matching on the path keeps the route matchers anchored.
  */
 const pathOf = (url: string) => String(url).replace(/^https?:\/\/[^/]+/i, "");
 
@@ -36,13 +42,21 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
   });
 }
 
-/** Outcomes are toasts now — collected off the `tds:toast` bus. */
+/** Outcomes are toasts — collected off the `tds:toast` bus. */
 let toasts: Array<{ variant: string; message: string }> = [];
 const collectToast = (e: Event) => {
   toasts.push((e as CustomEvent<{ variant: string; message: string }>).detail);
 };
 
 beforeEach(() => {
+  // The data cache is module-level and survives between tests by design; a
+  // leaked entry would let one test paint another's fixture.
+  resetCache();
+  // apiFetch consults the host-side runtime config (/tds-runtime.json) before
+  // it resolves a URL, so without this the first fetch call is that probe. The
+  // panel products never ship the file — they render <meta name="tds-api-base">
+  // — so "absent" is also what happens in production.
+  primeRuntimeConfig(null);
   toasts = [];
   window.addEventListener(TOAST_EVENT, collectToast);
   handlers = [];
@@ -70,538 +84,323 @@ beforeEach(() => {
 afterEach(() => {
   window.removeEventListener(TOAST_EVENT, collectToast);
   cleanup();
+  resetCache();
 });
 
 const user = () => userEvent.setup({ delay: null });
-const SITE = { id: 1, site_key: "landing", name: "Landingpage", updated_at: "2026-01-01" };
 
-async function renderSites(sites: unknown[] = [SITE]) {
+const SITE = {
+  id: 1,
+  site_key: "landing",
+  name: "Landingpage",
+  cache_url: "https://tracht-digital.de",
+  updated_at: "2026-01-01",
+};
+
+const block = (section_key: string, lang = "de", machine_translated = 0) => ({
+  section_key,
+  lang,
+  machine_translated,
+  updated_at: "2026-01-01",
+});
+
+/** Render with a site list and a block list already answering. */
+async function open(blocks: unknown[], sites: unknown[] = [SITE]) {
   respond(/\/cms\/sites$/, { sites });
-  render(<SitesList />);
-  await waitFor(() => expect(calls.some((c) => pathOf(c.url) === "/cms/sites")).toBe(true));
-}
-
-/** Open the site editor for `landing`. */
-async function openSite(blocks: unknown[] = []) {
-  await renderSites();
   respond(/\/cms\/landing\/blocks$/, { blocks });
-  const u = user();
-  await u.click(await screen.findByRole("button", { name: /Landingpage/ }));
-  await screen.findByRole("heading", { name: "Block bearbeiten" });
-  return u;
+  render(<SitesList />);
+  if (sites.length > 0 && blocks.length > 0) {
+    await screen.findByRole("navigation", { name: "Seite wählen" });
+  }
+  return user();
 }
 
-// `query`, not `get`: one test asserts the raw editor is ABSENT while the
-// structured form is showing, and getBy* throws rather than returning null.
-const jsonBox = () => screen.queryByLabelText("JSON") as HTMLTextAreaElement;
+const jsonBox = () => screen.queryByLabelText("JSON") as HTMLTextAreaElement | null;
+const puts = () => calls.filter((c) => c.method === "PUT");
 
 /** userEvent.type() reads { and [ as key syntax, so JSON must be pasted. */
 async function setJson(u: ReturnType<typeof user>, text: string) {
-  const box = jsonBox();
+  const box = jsonBox() as HTMLTextAreaElement;
   await u.clear(box);
   await u.click(box);
   await u.paste(text);
 }
-const puts = () => calls.filter((c) => c.method === "PUT");
 
-// apiFetch consults the host-side runtime config (/tds-runtime.json) before it
-// resolves a URL, so without this the first entry in fetch.mock.calls is that
-// probe rather than the endpoint under test. The panel products never ship the
-// file — they render <meta name="tds-api-base"> instead — so "absent" is also
-// what actually happens in production.
-beforeEach(() => primeRuntimeConfig(null));
-
-describe("the site list", () => {
-  it("loads sites on mount with credentials", async () => {
-    await renderSites();
-    expect(await screen.findByText("Landingpage")).toBeTruthy();
-    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    expect(fetchMock.mock.calls[0]![1]).toMatchObject({ credentials: "include" });
-  });
-
-  it("shows the empty state when there are none", async () => {
-    await renderSites([]);
-    expect(await screen.findByText("Noch keine Websites angelegt.")).toBeTruthy();
-  });
-
-  it("degrades to empty rather than hanging when the request fails", async () => {
-    respond(/\/cms\/sites$/, {}, 500);
+describe("the empty state", () => {
+  it("sends the operator to Einstellungen instead of offering a form", async () => {
+    // Adding a site moved out of this screen. Without this pointer the panel
+    // would show an empty page with no way forward at all.
+    respond(/\/cms\/sites$/, { sites: [] });
     render(<SitesList />);
-    expect(await screen.findByText("Noch keine Websites angelegt.")).toBeTruthy();
+    const empty = await screen.findByText(/Noch keine Website verbunden/);
+    expect(empty).toBeTruthy();
+    const link = screen.getByRole("link", { name: /Einstellungen/ });
+    expect(link.getAttribute("href")).toBe("/einstellungen");
   });
 
-  it("degrades to empty when fetch rejects", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+  it("offers no create form anywhere on the content screen", async () => {
+    respond(/\/cms\/sites$/, { sites: [] });
     render(<SitesList />);
-    expect(await screen.findByText("Noch keine Websites angelegt.")).toBeTruthy();
+    await screen.findByText(/Noch keine Website verbunden/);
+    expect(screen.queryByRole("button", { name: /hinzufügen/i })).toBeNull();
   });
 
-  it("creates a site with a valid kebab key", async () => {
-    await renderSites([]);
-    const u = user();
-    await u.type(screen.getByPlaceholderText("site-key (kebab)"), "neue-seite");
-    await u.type(screen.getByPlaceholderText("Name"), "Neue Seite");
-    await u.click(screen.getByRole("button", { name: "Website hinzufügen" }));
-    await waitFor(() => {
-      const post = calls.find((c) => c.method === "POST");
-      expect(post?.body).toEqual({ site_key: "neue-seite", name: "Neue Seite" });
-    });
+  it("says the public site is unedited, not broken, when a site has no blocks", async () => {
+    await open([]);
+    expect(await screen.findByText(/Noch keine eigenen Inhalte gespeichert/)).toBeTruthy();
+    expect(screen.getByText(/eingebauten Vorgaben/)).toBeTruthy();
   });
 
-  it("refuses an invalid key before hitting the API", async () => {
-    await renderSites([]);
-    const u = user();
-    await u.type(screen.getByPlaceholderText("site-key (kebab)"), "Nicht Kebab");
-    await u.type(screen.getByPlaceholderText("Name"), "X");
-    await u.click(screen.getByRole("button", { name: "Website hinzufügen" }));
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  it("still offers pages and sections so a new site can create its first override", async () => {
+    respond(/\/cms\/landing\/blocks\/hero\?/, { value: null, lang: "de" });
+    const u = await open([]);
+    const nav = await screen.findByRole("navigation", { name: "Seite wählen" });
+    expect(within(nav).getByRole("button", { name: "Startseite" })).toBeTruthy();
+    const heroRow = (await screen.findByText("Titelbereich")).closest("li")!;
+    await u.click(within(heroRow).getByRole("button", { name: "DE · Vorgabe" }));
+    expect(await screen.findByText(/noch kein eigener Inhalt gespeichert/)).toBeTruthy();
+    expect(await screen.findByLabelText("Überschrift")).toBeTruthy();
   });
 
-  it("refuses a blank name", async () => {
-    await renderSites([]);
-    const u = user();
-    await u.type(screen.getByPlaceholderText("site-key (kebab)"), "gueltig");
-    await u.type(screen.getByPlaceholderText("Name"), "   ");
-    await u.click(screen.getByRole("button", { name: "Website hinzufügen" }));
-    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
-  });
-
-  it("clears the form and reloads after a successful create", async () => {
-    await renderSites([]);
-    const u = user();
-    await u.type(screen.getByPlaceholderText("site-key (kebab)"), "neu");
-    await u.type(screen.getByPlaceholderText("Name"), "Neu");
-    await u.click(screen.getByRole("button", { name: "Website hinzufügen" }));
-    await waitFor(() => expect(calls.filter((c) => pathOf(c.url) === "/cms/sites" && c.method === "GET")).toHaveLength(2));
-    expect((screen.getByPlaceholderText("site-key (kebab)") as HTMLInputElement).value).toBe("");
+  it("reports the HTTP status when the site list fails", async () => {
+    respond(/\/cms\/sites$/, {}, 403);
+    render(<SitesList />);
+    // A calm empty state here would be indistinguishable from "no sites yet".
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", expect.stringContaining("403"));
   });
 });
 
-describe("the block list", () => {
-  it("scopes the block request to the selected site", async () => {
-    await openSite();
-    expect(calls.some((c) => pathOf(c.url) === "/cms/landing/blocks")).toBe(true);
+describe("choosing a site", () => {
+  it("hides the picker when there is only one site", async () => {
+    await open([block("hero")]);
+    expect(screen.queryByRole("group", { name: "Website wählen" })).toBeNull();
   });
 
-  it("lists a block with its language", async () => {
-    await openSite([{ section_key: "hero", lang: "de", updated_at: "x" }]);
-    expect(await screen.findByText("hero")).toBeTruthy();
-    expect(within(screen.getByRole("list")).getByText("de")).toBeTruthy();
-  });
-
-  it("marks a machine-translated block", async () => {
-    // The Auto chip is how an editor knows DeepL wrote it and a manual edit
-    // will claim the row.
-    await openSite([{ section_key: "hero", lang: "en", machine_translated: 1, updated_at: "x" }]);
-    expect(await screen.findByText("Auto")).toBeTruthy();
-  });
-
-  it("does not mark a hand-written block", async () => {
-    await openSite([{ section_key: "hero", lang: "de", machine_translated: 0, updated_at: "x" }]);
-    await screen.findByText("hero");
-    expect(screen.queryByText("Auto")).toBeNull();
-  });
-
-  it("returns to the site list", async () => {
-    const u = await openSite();
-    await u.click(screen.getByRole("button", { name: "← Websites" }));
-    expect(await screen.findByPlaceholderText("site-key (kebab)")).toBeTruthy();
+  it("offers a picker once there is a choice", async () => {
+    const second = { id: 2, site_key: "shop", name: "Shop", updated_at: "2026-01-01" };
+    await open([block("hero")], [SITE, second]);
+    const picker = await screen.findByRole("group", { name: "Website wählen" });
+    expect(within(picker).getByRole("button", { name: "Shop" })).toBeTruthy();
   });
 });
 
-describe("saving a block", () => {
-  it("rejects an empty section key", async () => {
-    const u = await openSite();
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText("Ungültiger Section-Key.")).toBeTruthy();
-    expect(puts()).toHaveLength(0);
+describe("choosing a page", () => {
+  it("groups sections into the pages a visitor sees", async () => {
+    await open([block("hero"), block("pricing"), block("legal_impressum")]);
+    const nav = await screen.findByRole("navigation", { name: "Seite wählen" });
+    expect(within(nav).getByRole("button", { name: "Startseite" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: "Preise" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: "Impressum" })).toBeTruthy();
   });
 
-  it("rejects a section key with illegal characters", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "Nicht Gut!");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText("Ungültiger Section-Key.")).toBeTruthy();
+  it("shows the public path of the selected page", async () => {
+    // So nobody has to guess which page they are editing.
+    await open([block("hero")]);
+    expect(await screen.findByText("/")).toBeTruthy();
   });
 
-  it("accepts underscores in a section key", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "cookie_banner");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(pathOf(puts()[0]!.url)).toBe("/cms/landing/blocks/cookie_banner");
+  it("names a section in German and keeps its key visible", async () => {
+    // The key is what the API, the cache event and every log line call it, so
+    // hiding it would make a support conversation impossible.
+    await open([block("hero")]);
+    expect(await screen.findByText("Titelbereich")).toBeTruthy();
+    expect(screen.getByText("hero")).toBeTruthy();
   });
 
-  it("refuses to save invalid JSON", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await setJson(u, "{nicht json");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText(/gültiges JSON-Objekt/)).toBeTruthy();
-    expect(puts()).toHaveLength(0);
+  it("marks a machine-translated language", async () => {
+    await open([block("hero", "de"), block("hero", "en", 1)]);
+    expect(await screen.findByRole("button", { name: /EN · auto/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^DE$/ })).toBeTruthy();
   });
 
-  it("refuses a JSON array — a block must be an object", async () => {
-    // The public sites spread the block over their defaults; an array would
-    // produce numeric keys.
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await setJson(u, "[1,2]");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText(/gültiges JSON-Objekt/)).toBeTruthy();
-    expect(puts()).toHaveLength(0);
+  it("offers a missing language as Vorgabe instead of making it impossible to author", async () => {
+    await open([block("hero", "de")]);
+    const heroRow = (await screen.findByText("Titelbereich")).closest("li")!;
+    expect(within(heroRow).getByRole("button", { name: "EN · Vorgabe" })).toBeTruthy();
   });
 
-  it("refuses a bare JSON scalar", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await setJson(u, "42");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText(/gültiges JSON-Objekt/)).toBeTruthy();
-  });
-
-  it("refuses JSON null", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await setJson(u, "null");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    expect(await screen.findByText(/gültiges JSON-Objekt/)).toBeTruthy();
-  });
-
-  it("PUTs the parsed object with the chosen language", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await setJson(u, '{"a":1}');
-    // By name, not by role alone — the editor also carries the legal-document
-    // uploader, which has a language select of its own.
-    await u.selectOptions(screen.getByLabelText("Sprache des Blocks"), "en");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(puts()[0]!.body).toEqual({ value: { a: 1 }, lang: "en" });
-  });
-
-  it("confirms a save and reloads the block list", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "success" && t.message.includes("Gespeichert"))).toBe(true));
-    await waitFor(() => expect(calls.filter((c) => pathOf(c.url) === "/cms/landing/blocks")).toHaveLength(2));
-  });
-
-  it("reports the status when a save fails", async () => {
-    const u = await openSite();
-    respond(/\/blocks\/unbekannt$/, {}, 403, "PUT");
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("403"))).toBe(true));
-  });
-
-  it("does not reload the block list after a failed save", async () => {
-    const u = await openSite();
-    respond(/\/blocks\/unbekannt$/, {}, 500, "PUT");
-    await u.type(screen.getByPlaceholderText(/section-key/), "unbekannt");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
-    expect(calls.filter((c) => pathOf(c.url) === "/cms/landing/blocks")).toHaveLength(1);
+  it("switches the section list when another page is chosen", async () => {
+    const u = await open([block("hero"), block("legal_impressum")]);
+    await u.click(screen.getByRole("button", { name: "Impressum" }));
+    expect(await screen.findByText("Impressum (Text)")).toBeTruthy();
+    expect(screen.queryByText("Titelbereich")).toBeNull();
   });
 });
 
-describe("structured form vs raw JSON", () => {
+describe("editing a section", () => {
+  /** Open the `hero` block of the landing page in the structured form. */
+  async function openHero(value: unknown = { headline: "Hallo" }) {
+    respond(/\/cms\/landing\/blocks\/hero\?/, { value, lang: "de" });
+    const u = await open([block("hero")]);
+    await u.click(await screen.findByRole("button", { name: /^DE$/ }));
+    await screen.findByRole("button", { name: "Speichern" });
+    return u;
+  }
+
   it("opens a known section in the structured form", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "hero");
-    // The hero schema renders labelled fields instead of a JSON textarea.
-    expect(await screen.findByText("Überschrift")).toBeTruthy();
+    await openHero();
+    expect(await screen.findByLabelText("Überschrift")).toBeTruthy();
     expect(jsonBox()).toBeNull();
   });
 
   it("keeps an unknown section on the raw JSON editor", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "voellig-unbekannt");
-    expect(jsonBox()).toBeTruthy();
+    respond(/\/cms\/landing\/blocks\/shop_teaser\?/, { value: { a: 1 }, lang: "de" });
+    const u = await open([block("shop_teaser")]);
+    await u.click(await screen.findByRole("button", { name: "Weitere Abschnitte" }));
+    const row = (await screen.findByText("shop_teaser", { selector: "strong" })).closest("li")!;
+    await u.click(within(row).getByRole("button", { name: /^DE$/ }));
+    expect(await screen.findByLabelText("JSON")).toBeTruthy();
+    // …and no toggle, because there is no form to toggle to.
     expect(screen.queryByRole("button", { name: "JSON bearbeiten" })).toBeNull();
   });
 
-  it("offers the Form/JSON toggle only for a known section", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "faq");
-    expect(await screen.findByRole("button", { name: "JSON bearbeiten" })).toBeTruthy();
-  });
-
-  it("edits a text field through the form and saves it", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "hero");
-    const headline = (await screen.findByText("Überschrift")).querySelector("input")!;
-    await u.type(headline, "Digitalisierung");
+  it("keeps keys the schema does not list", async () => {
+    // THE invariant. A block is merged over the public site's defaults, so a
+    // key dropped here blanks part of the live page and nothing goes red.
+    const u = await openHero({ headline: "Hallo", unbekannt: { tief: true } });
+    await u.clear(screen.getByLabelText("Überschrift"));
+    await u.type(screen.getByLabelText("Überschrift"), "Neu");
     await u.click(screen.getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(puts()).toHaveLength(1));
-    expect((puts()[0]!.body as { value: Record<string, unknown> }).value.headline).toBe("Digitalisierung");
-  });
-
-  it("PRESERVES keys the schema does not know about", async () => {
-    // The core invariant: the form lists a subset of the block's keys. If it
-    // replaced the object instead of spreading it, every unlisted key — and
-    // the live section that reads it — would silently blank on the next save.
-    const u = await openSite([{ section_key: "hero", lang: "de", updated_at: "x" }]);
-    respond(/\/blocks\/hero\?lang=de$/, { value: { headline: "Alt", customKey: "behalten", nested: { a: 1 } } });
-    await u.click(await screen.findByRole("button", { name: /hero/ }));
-
-    const headline = await waitFor(() => {
-      const el = screen.getByText("Überschrift").querySelector("input") as HTMLInputElement;
-      expect(el.value).toBe("Alt");
-      return el;
-    });
-    await u.clear(headline);
-    await u.type(headline, "Neu");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    expect((puts()[0]!.body as { value: Record<string, unknown> }).value).toEqual({
-      headline: "Neu",
-      customKey: "behalten",
-      nested: { a: 1 },
+    expect(puts()[0]?.body).toMatchObject({
+      value: { headline: "Neu", unbekannt: { tief: true } },
+      lang: "de",
     });
   });
 
-  it("round-trips form → JSON without losing a field", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "hero");
-    const headline = (await screen.findByText("Überschrift")).querySelector("input")!;
-    await u.type(headline, "Wert");
+  it("refuses to save invalid JSON", async () => {
+    const u = await openHero();
     await u.click(screen.getByRole("button", { name: "JSON bearbeiten" }));
-    expect(JSON.parse(jsonBox().value)).toMatchObject({ headline: "Wert" });
+    await setJson(u, "{ kaputt");
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(puts()).toHaveLength(0);
   });
 
-  it("round-trips JSON → form", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "hero");
-    await u.click(await screen.findByRole("button", { name: "JSON bearbeiten" }));
-    await setJson(u, '{"tagline":"Aus JSON"}');
-    await u.click(screen.getByRole("button", { name: "Formular" }));
-    const tagline = (await screen.findByText("Tagline")).querySelector("input") as HTMLInputElement;
-    expect(tagline.value).toBe("Aus JSON");
+  it("refuses a JSON array — a block must be an object", async () => {
+    const u = await openHero();
+    await u.click(screen.getByRole("button", { name: "JSON bearbeiten" }));
+    await setJson(u, "[1, 2]");
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(puts()).toHaveLength(0);
   });
 
-  it("refuses to enter the form from invalid JSON, and says why", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "hero");
-    await u.click(await screen.findByRole("button", { name: "JSON bearbeiten" }));
-    await setJson(u, "{kaputt");
-    await u.click(screen.getByRole("button", { name: "Formular" }));
-    expect(await screen.findByText(/Formular nicht verfügbar/)).toBeTruthy();
-    expect(jsonBox()).toBeTruthy();
+  it("PUTs to the section's own route", async () => {
+    const u = await openHero();
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(pathOf(puts()[0]!.url)).toBe("/cms/landing/blocks/hero");
+  });
+
+  it("coerces a malformed stored array to an empty object instead of crashing", async () => {
+    await openHero(["kaputt"]);
+    expect((await screen.findByLabelText("Überschrift") as HTMLInputElement).value).toBe("");
+  });
+
+  it("keeps typed list fields and unknown item keys intact", async () => {
+    respond(/\/cms\/landing\/blocks\/pricing\?/, {
+      value: {
+        items: [{ title: "Basis", rate: 50, description: "", includes: [], highlight: false, custom: "keep" }],
+      },
+      lang: "de",
+    });
+    const u = await open([block("pricing")]);
+    const pricingRow = (await screen.findByText("pricing")).closest("li")!;
+    await u.click(within(pricingRow).getByRole("button", { name: /^DE$/ }));
+    const rate = (await screen.findByText(/Stundensatz/)).querySelector("input")!;
+    await u.clear(rate);
+    await u.type(rate, "95");
+    await u.click(screen.getByRole("checkbox", { name: "Hervorheben" }));
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const value = (puts()[0]!.body as { value: { items: Array<Record<string, unknown>> } }).value;
+    expect(value.items[0]).toMatchObject({ rate: 95, highlight: true, custom: "keep" });
   });
 });
 
-describe("typed fields in the structured form", () => {
-  /** Open the pricing section, which carries every field type. */
-  async function pricing() {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/section-key/), "pricing");
-    await screen.findByText("Pakete");
-    return u;
+describe("what the save says afterwards", () => {
+  async function saveWith(response: Record<string, unknown>, status = 200) {
+    respond(/\/cms\/landing\/blocks\/hero\?/, { value: { headline: "x" }, lang: "de" });
+    respond(/\/cms\/landing\/blocks\/hero$/, response, status, "PUT");
+    const u = await open([block("hero")]);
+    await u.click(await screen.findByRole("button", { name: /^DE$/ }));
+    await u.click(await screen.findByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
+    return toasts[toasts.length - 1]!;
   }
 
-  const savedValue = async (u: ReturnType<typeof user>) => {
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    return (puts()[0]!.body as { value: Record<string, unknown> }).value;
-  };
-
-  it("adds a list entry with correctly typed blank fields", async () => {
-    // A blank entry must not seed "" into a number or a checkbox.
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    const value = await savedValue(u);
-    expect((value.items as unknown[])[0]).toEqual({
-      title: "",
-      rate: "",
-      description: "",
-      includes: [],
-      highlight: false,
-    });
+  it("reports the targeted cache request without guessing a single page", async () => {
+    const toast = await saveWith({ ok: true, cached: true });
+    expect(toast.variant).toBe("success");
+    expect(toast.message).toContain("betroffenen Seiten");
   });
 
-  it("stores a number field as a number, not a string", async () => {
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    const rate = (await screen.findByText(/Stundensatz/)).querySelector("input")!;
-    await u.type(rate, "95");
-    const value = await savedValue(u);
-    expect((value.items as Array<{ rate: unknown }>)[0]!.rate).toBe(95);
+  it("does not claim a rebuild the API says did not happen", async () => {
+    // `cached: false` means the URL/token/service was incomplete and no call
+    // went out. Either way, saying "wird neu gebaut"
+    // would be a success message for a request nobody sent.
+    const toast = await saveWith({ ok: true, cached: false });
+    expect(toast.message).not.toContain("wird neu gebaut");
   });
 
-  it("stores a cleared number field as null rather than an empty string", async () => {
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    const rate = (await screen.findByText(/Stundensatz/)).querySelector("input")!;
-    await u.type(rate, "95");
-    await u.clear(rate);
-    const value = await savedValue(u);
-    expect((value.items as Array<{ rate: unknown }>)[0]!.rate).toBeNull();
-  });
+  it("paints cached sites as stale while a background refresh is pending", async () => {
+    const now = Date.now();
+    put("/cms/sites", { sites: [SITE] });
+    vi.spyOn(Date, "now").mockReturnValue(now + 31_000);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
 
-  it("stores a checkbox as a boolean", async () => {
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    const highlight = (await screen.findByText("Hervorheben")).querySelector("input")!;
-    await u.click(highlight);
-    const value = await savedValue(u);
-    expect((value.items as Array<{ highlight: unknown }>)[0]!.highlight).toBe(true);
-  });
-
-  it("adds and fills a string-list entry", async () => {
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Hinweis" }));
-    const notes = screen.getByText("Hinweise").closest(".cms-form__stringlist")!;
-    await u.type(within(notes).getAllByRole("textbox")[0]!, "Alle Preise netto");
-    const value = await savedValue(u);
-    expect(value.notes).toEqual(["Alle Preise netto"]);
-  });
-
-  it("removes a string-list entry", async () => {
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Hinweis" }));
-    await u.click(screen.getByRole("button", { name: "×" }));
-    const value = await savedValue(u);
-    expect(value.notes).toEqual([]);
-  });
-
-  it("removes a list entry", async () => {
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    await u.click(screen.getByRole("button", { name: "Eintrag entfernen" }));
-    const value = await savedValue(u);
-    expect(value.items).toEqual([]);
-  });
-
-  it("keeps list entries independent when one is edited", async () => {
-    // A shared-reference bug here would write the same title into both.
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    const titles = screen.getAllByText("Titel").map((l) => l.querySelector("input")!);
-    await u.type(titles[0]!, "Basis");
-    await u.type(titles[1]!, "Premium");
-    const value = await savedValue(u);
-    expect((value.items as Array<{ title: string }>).map((i) => i.title)).toEqual(["Basis", "Premium"]);
-  });
-
-  it("keeps an entry's OTHER fields when one of its fields is edited", async () => {
-    // Editing a list item must merge into it, not replace it — otherwise
-    // typing a title silently discards that package's rate and includes.
-    const u = await pricing();
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    await u.type((await screen.findByText(/Stundensatz/)).querySelector("input")!, "95");
-    await u.click(screen.getByRole("checkbox"));
-    await u.type(screen.getByText("Titel").querySelector("input")!, "Basis");
-
-    const value = await savedValue(u);
-    expect((value.items as unknown[])[0]).toEqual({
-      title: "Basis",
-      rate: 95,
-      description: "",
-      includes: [],
-      highlight: true,
-    });
-  });
-
-  it("shows an empty-list hint until an entry is added", async () => {
-    const u = await pricing();
-    expect(screen.getAllByText("Noch keine Einträge.").length).toBeGreaterThan(0);
-    await u.click(screen.getByRole("button", { name: "+ Paket" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Eintrag entfernen" })).toBeTruthy());
-  });
-
-  it("tolerates a stored list field that is not an array", async () => {
-    // Hand-edited JSON can put anything here; the form must not crash.
-    const u = await openSite([{ section_key: "pricing", lang: "de", updated_at: "x" }]);
-    respond(/\/blocks\/pricing\?lang=de$/, { value: { items: "kaputt" } });
-    await u.click(await screen.findByRole("button", { name: /pricing/ }));
-    expect(await screen.findByText("Pakete")).toBeTruthy();
-  });
-
-  it("tolerates a block whose stored value is not an object", async () => {
-    const u = await openSite([{ section_key: "hero", lang: "de", updated_at: "x" }]);
-    respond(/\/blocks\/hero\?lang=de$/, { value: "kaputt" });
-    await u.click(await screen.findByRole("button", { name: /hero/ }));
-    const headline = (await screen.findByText("Überschrift")).querySelector("input") as HTMLInputElement;
-    expect(headline.value).toBe("");
-  });
-
-  it("coerces a null stored value to an empty object rather than crashing", async () => {
-    // A block row can legitimately hold null. Without the coercion the
-    // structured form dereferences null and the whole editor white-screens.
-    const u = await openSite([{ section_key: "hero", lang: "de", updated_at: "x" }]);
-    respond(/\/blocks\/hero\?lang=de$/, { value: null });
-    await u.click(await screen.findByRole("button", { name: /hero/ }));
-    const headline = (await screen.findByText("Überschrift")).querySelector("input") as HTMLInputElement;
-    expect(headline.value).toBe("");
-  });
-
-  it("coerces a stored array to an empty object", async () => {
-    // Arrays would otherwise reach the form and save back numeric keys.
-    const u = await openSite([{ section_key: "hero", lang: "de", updated_at: "x" }]);
-    respond(/\/blocks\/hero\?lang=de$/, { value: ["a", "b"] });
-    await u.click(await screen.findByRole("button", { name: /hero/ }));
-    await u.type((await screen.findByText("Überschrift")).querySelector("input")!, "X");
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
-    await waitFor(() => expect(puts()).toHaveLength(1));
-    expect((puts()[0]!.body as { value: unknown }).value).toEqual({ headline: "X" });
-  });
-});
-
-describe("rebuild and translation controls", () => {
-  it("saves the rebuild configuration trimmed", async () => {
-    const u = await openSite();
-    await u.type(screen.getByPlaceholderText(/tds-landingpage-frontend/), "  o/r  ");
-    await u.click(screen.getByRole("button", { name: "Konfiguration speichern" }));
+    render(<SitesList />);
     await waitFor(() => {
-      const put = puts().find((c) => pathOf(c.url).includes("rebuild-config"));
-      expect(put?.body).toMatchObject({ rebuild_repo: "o/r", rebuild_workflow: "dev.yml" });
+      const root = document.querySelector(".cms-sites");
+      expect(root?.classList.contains("tds-stale")).toBe(true);
+      expect(root?.getAttribute("aria-busy")).toBe("true");
     });
   });
 
-  it("explains a 503 rebuild as a missing token", async () => {
-    const u = await openSite();
-    respond(/\/rebuild$/, {}, 503, "POST");
-    await u.click(screen.getByRole("button", { name: "Jetzt neu bauen" }));
-    expect(await screen.findByText(/Kein Rebuild-Token konfiguriert/)).toBeTruthy();
+  it("does not overwrite typed content when a stale block refresh finishes", async () => {
+    const now = Date.now();
+    put("/cms/sites", { sites: [SITE] });
+    put("/cms/landing/blocks", { blocks: [block("hero")] });
+    put("/cms/landing/blocks/hero?lang=de", { value: { headline: "Alt" } });
+    vi.spyOn(Date, "now").mockReturnValue(now + 31_000);
+
+    let finishBlock!: () => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url: string) => {
+        const path = pathOf(url);
+        if (path === "/cms/landing/blocks/hero?lang=de") {
+          return new Promise<Response>((resolve) => {
+            finishBlock = () => resolve({
+              ok: true,
+              status: 200,
+              json: async () => ({ value: { headline: "Neu vom Server" } }),
+            } as Response);
+          });
+        }
+        const body = path === "/cms/sites" ? { sites: [SITE] } : { blocks: [block("hero")] };
+        return Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
+      }),
+    );
+
+    render(<SitesList />);
+    const heroRow = (await screen.findByText("Titelbereich")).closest("li")!;
+    const u = user();
+    await u.click(within(heroRow).getByRole("button", { name: /^DE$/ }));
+    const headline = (await screen.findByLabelText("Überschrift")) as HTMLInputElement;
+    await u.clear(headline);
+    await u.type(headline, "Mein Entwurf");
+
+    await act(async () => finishBlock());
+    await waitFor(() => expect(headline.value).toBe("Mein Entwurf"));
   });
 
-  it("explains a 422 rebuild as a missing repository", async () => {
-    const u = await openSite();
-    respond(/\/rebuild$/, {}, 422, "POST");
-    await u.click(screen.getByRole("button", { name: "Jetzt neu bauen" }));
-    expect(await screen.findByText(/kein Repository hinterlegt/)).toBeTruthy();
-  });
-
-  it("reports an unexpected rebuild failure with its status", async () => {
-    const u = await openSite();
-    respond(/\/rebuild$/, {}, 500, "POST");
-    await u.click(screen.getByRole("button", { name: "Jetzt neu bauen" }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("500"))).toBe(true));
-  });
-
-  it("reports the counts from a translation backfill", async () => {
-    const u = await openSite();
-    respond(/\/translations\/backfill$/, { created: 2, skipped: 5 }, 200, "POST");
-    await u.click(screen.getByRole("button", { name: "Übersetzungen nachziehen" }));
-await waitFor(() => expect(toasts.some((t) => t.variant === "success" && /2 erstellt, 5 übersprungen/.test(t.message))).toBe(true));
-  });
-
-  it("explains a 503 backfill as DeepL not configured", async () => {
-    const u = await openSite();
-    respond(/\/translations\/backfill$/, {}, 503, "POST");
-    await u.click(screen.getByRole("button", { name: "Übersetzungen nachziehen" }));
-    expect(await screen.findByText(/nicht konfiguriert/)).toBeTruthy();
-  });
-
-  it("pre-fills the rebuild fields from the site record", async () => {
-    await renderSites([{ ...SITE, rebuild_repo: "o/r", rebuild_workflow: "release.yml" }]);
-    respond(/\/cms\/landing\/blocks$/, { blocks: [] });
-    await user().click(await screen.findByRole("button", { name: /Landingpage/ }));
-    expect((await screen.findByPlaceholderText(/tds-landingpage-frontend/) as HTMLInputElement).value).toBe("o/r");
-    expect((screen.getByPlaceholderText("dev.yml") as HTMLInputElement).value).toBe("release.yml");
+  it("reports the HTTP status when the save itself fails", async () => {
+    // The status is what separates "session expired" from "service down" in a
+    // bug report.
+    const toast = await saveWith({}, 403);
+    expect(toast.variant).toBe("danger");
+    expect(toast.message).toContain("403");
   });
 });

@@ -8,8 +8,8 @@ use PDO;
 /**
  * Website-CMS data access: the site registry + the per-(site, section, lang)
  * JSON content blocks. Blocks are upserted (one row per section/lang/site); the
- * static sites read them at build time. Ported from tds-content-api's
- * ContentBlockRepository, extended for the multi-site model.
+ * public sites read them while rendering/cache-filling. Ported from
+ * tds-content-api's ContentBlockRepository, extended for the multi-site model.
  */
 final class CmsRepository
 {
@@ -23,7 +23,7 @@ final class CmsRepository
     public function sites(): array
     {
         return $this->pdo->query(
-            'SELECT id, site_key, name, rebuild_repo, rebuild_workflow, updated_at
+            'SELECT id, site_key, name, rebuild_repo, rebuild_workflow, cache_url, updated_at
              FROM cms_site ORDER BY name, id'
         )->fetchAll();
     }
@@ -37,7 +37,7 @@ final class CmsRepository
     public function findSite(string $siteKey): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, site_key, name, rebuild_repo, rebuild_workflow FROM cms_site WHERE site_key = :k LIMIT 1'
+            'SELECT id, site_key, name, rebuild_repo, rebuild_workflow, cache_url FROM cms_site WHERE site_key = :k LIMIT 1'
         );
         $stmt->execute([':k' => $siteKey]);
         $row = $stmt->fetch();
@@ -89,8 +89,8 @@ final class CmsRepository
     }
 
     // --- Public (unauthenticated) read surface ------------------------------
-    // Serves the editable content blocks the public landingpage/blog SSG builds
-    // fetch (the successor to tds-content-api's open `GET /content/landing`).
+    // Serves the editable content blocks the public landingpage/blog servers
+    // fetch while rendering (successor to open `GET /content/landing`).
 
     /** The site the public landingpage maps to (single-site): first by name/id. */
     public function defaultSite(): ?array

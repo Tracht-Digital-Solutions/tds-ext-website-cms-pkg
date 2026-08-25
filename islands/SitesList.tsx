@@ -1,7 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 import LegalDocs from "./LegalDocs.tsx";
+import {
+  SECTION_SCHEMAS,
+  resolvePages,
+  sectionLabel,
+  type Field,
+  type LeafField,
+  type ResolvedPage,
+  type StringListField,
+} from "./sections.js";
 
 interface Site {
   id: number;
@@ -14,7 +24,7 @@ interface Site {
    *
    * Separate from the rebuild pair above and not interchangeable with it: those
    * dispatch a CI build and ship code, this re-renders pages from content that
-   * is already stored.
+   * is already stored. Configured under Einstellungen → Website-CMS.
    */
   cache_url?: string | null;
   updated_at: string;
@@ -30,68 +40,110 @@ interface BlockMeta {
 const api = apiFetch;
 
 /**
- * Website-CMS: managed-sites list + add-site form (CP1) and the per-site content
- * block editor (CP2) — list a site's section blocks and edit each block's JSON
- * (one object per section × language), saved via PUT. A save-triggered static-
- * site rebuild lands in a later checkpoint.
+ * Website-CMS — the CONTENT screen: pick a website, pick a page, edit its
+ * sections.
+ *
+ * ### What is deliberately NOT here any more
+ *
+ * Adding a website, and configuring where its rebuild and its page cache point,
+ * moved to **Einstellungen → Website-CMS** (`SiteRegistry.tsx`). Those are
+ * things you do once when a site is connected; they were sitting on the daily
+ * editing screen, above the content, where a repository name and a GitHub
+ * workflow file are noise at best and an invitation to break a working site at
+ * worst. This screen now answers exactly one question: which words go on which
+ * page.
+ *
+ * ### Stale-while-revalidate
+ *
+ * Every read goes through `useCachedJson`, so coming back to this screen paints
+ * the site list and the page list instantly from the last visit and refreshes
+ * them behind the user. While that refresh is in flight the affected list wears
+ * `tds-stale` — dimmed and pulsing — because data that may already be wrong
+ * must never be presented as current.
  */
 export default function SitesList() {
-  const [sites, setSites] = useState<Site[] | null>(null);
-  const [key, setKey] = useState("");
-  const [name, setName] = useState("");
-  const [selected, setSelected] = useState<Site | null>(null);
+  const sitesQuery = useCachedJson<{ sites: Site[] }>("/cms/sites");
+  const sites = sitesQuery.data?.sites ?? [];
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const sitesVisiblyStale =
+    sitesQuery.stale || (sitesQuery.error !== null && sitesQuery.data !== undefined);
 
-  const load = () =>
-    api("/cms/sites")
-      .then((r) => (r.ok ? r.json() : { sites: [] }))
-      .then((d) => setSites(d.sites ?? []))
-      .catch(() => setSites([]));
-
+  // Follow the registry: a site that disappears (or the very first one to
+  // arrive) must not leave the screen pointing at nothing.
   useEffect(() => {
-    load();
-  }, []);
-
-  const create = async () => {
-    if (!/^[a-z0-9-]{2,64}$/.test(key) || name.trim() === "") return;
-    const res = await api("/cms/sites", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ site_key: key, name }),
-    });
-    if (res.ok) {
-      setKey("");
-      setName("");
-      load();
+    if (sites.length === 0) {
+      if (selectedKey !== null) setSelectedKey(null);
+      return;
     }
-  };
+    if (selectedKey === null || !sites.some((s) => s.site_key === selectedKey)) {
+      setSelectedKey(sites[0]?.site_key ?? null);
+    }
+  }, [sites, selectedKey]);
 
-  if (selected) {
-    return <SiteEditor site={selected} onBack={() => setSelected(null)} />;
+  const selected = sites.find((s) => s.site_key === selectedKey) ?? null;
+
+  if (sitesQuery.loading) {
+    return (
+      <p>
+        <Spinner />
+      </p>
+    );
+  }
+
+  if (sitesQuery.error && sites.length === 0) {
+    return (
+      <p className="tds-alert tds-alert--danger" role="alert">
+        Websites konnten nicht geladen werden ({sitesQuery.error.message}).
+      </p>
+    );
+  }
+
+  if (sites.length === 0) {
+    return (
+      <div className="tds-empty">
+        <p>Noch keine Website verbunden.</p>
+        <p className="marginalia">
+          Websites werden unter <a className="link-underline" href="/einstellungen">Einstellungen → Website-CMS</a>{" "}
+          hinzugefügt. Dort liegt auch, wohin ein Speichern den Seiten-Cache schickt.
+        </p>
+      </div>
+    );
   }
 
   return (
-    <div className="cms-sites">
-      <form className="tds-stack" onSubmit={(e) => { e.preventDefault(); create(); }}>
-        <input className="field-boxed" value={key} onChange={(e) => setKey(e.target.value)} placeholder="site-key (kebab)" required />
-        <input className="field-boxed" value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" required />
-        <button className="btn btn-primary" type="submit">Website hinzufügen</button>
-      </form>
-
-      {sites === null ? (
-        <p><Spinner /></p>
-      ) : sites.length === 0 ? (
-        <p>Noch keine Websites angelegt.</p>
-      ) : (
-        <ul className="tds-list">
+    <div
+      className={staleClass(sitesVisiblyStale, "cms-sites tds-stack")}
+      aria-busy={sitesVisiblyStale}
+    >
+      {sitesQuery.error ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          Websites konnten nicht aktualisiert werden ({sitesQuery.error.message}). Die angezeigten
+          Daten sind möglicherweise veraltet.
+        </p>
+      ) : null}
+      {/* One site is the overwhelmingly common case, so the picker only earns
+          its space when there is a choice to make. */}
+      {sites.length > 1 ? (
+        <div
+          className="tds-toolbar"
+          role="group"
+          aria-label="Website wählen"
+        >
           {sites.map((s) => (
-            <li key={s.id}>
-              <button className="btn btn-ghost" type="button" onClick={() => setSelected(s)}>
-                <strong>{s.name}</strong> <code>{s.site_key}</code>
-              </button>
-            </li>
+            <button
+              key={s.id}
+              type="button"
+              className={s.site_key === selectedKey ? "chip chip--info" : "chip chip--neutral"}
+              aria-pressed={s.site_key === selectedKey}
+              onClick={() => setSelectedKey(s.site_key)}
+            >
+              {s.name}
+            </button>
           ))}
-        </ul>
-      )}
+        </div>
+      ) : null}
+
+      {selected ? <SiteEditor site={selected} /> : null}
     </div>
   );
 }
@@ -99,151 +151,31 @@ export default function SitesList() {
 // --- structured section forms ----------------------------------------------
 // Known section shapes render typed fields (text/textarea/number/checkbox,
 // repeatable object lists, and string lists) instead of raw JSON. Anything not
-// here falls back to the JSON editor, and a Form/JSON toggle is always available.
-// Add a section here to give it a structured form.
-type LeafType = "text" | "textarea" | "number" | "checkbox";
-type LeafField = { key: string; label: string; type: LeafType };
-type StringListField = { key: string; label: string; type: "stringlist"; itemLabel: string };
-type ObjectListField = { key: string; label: string; type: "list"; itemLabel: string; itemFields: (LeafField | StringListField)[] };
-type Field = LeafField | StringListField | ObjectListField;
-
-// Shapes match the tds-landingpage section defaults (the primary consumer). A
-// structured form only renders the fields listed here; any other keys in the
-// block survive untouched (the form spreads them), so a partial schema is safe.
-const SECTION_SCHEMAS: Record<string, Field[]> = {
-  hero: [
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "headlineSuffix", label: "Überschrift (Suffix)", type: "text" },
-    { key: "tagline", label: "Tagline", type: "text" },
-    { key: "sub", label: "Untertext", type: "textarea" },
-    { key: "cta1", label: "Button 1", type: "text" },
-    { key: "cta2", label: "Button 2", type: "text" },
-    { key: "scrollHint", label: "Scroll-Hinweis", type: "text" },
-  ],
-  about: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "lead", label: "Lead", type: "textarea" },
-    { key: "p1", label: "Absatz 1", type: "textarea" },
-    { key: "p2", label: "Absatz 2", type: "textarea" },
-    { key: "stat1Value", label: "Statistik 1 – Wert", type: "text" },
-    { key: "stat1Label", label: "Statistik 1 – Label", type: "text" },
-    { key: "stat2Value", label: "Statistik 2 – Wert", type: "text" },
-    { key: "stat2Label", label: "Statistik 2 – Label", type: "text" },
-    { key: "stat3Value", label: "Statistik 3 – Wert", type: "text" },
-    { key: "stat3Label", label: "Statistik 3 – Label", type: "text" },
-  ],
-  services: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "items", label: "Leistungen", type: "list", itemLabel: "Leistung", itemFields: [
-      { key: "number", label: "Nummer", type: "text" },
-      { key: "title", label: "Titel", type: "text" },
-      { key: "description", label: "Beschreibung", type: "textarea" },
-    ] },
-  ],
-  faq: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "items", label: "Fragen", type: "list", itemLabel: "Frage", itemFields: [
-      { key: "q", label: "Frage", type: "text" },
-      { key: "a", label: "Antwort", type: "textarea" },
-    ] },
-  ],
-  contact: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "sub", label: "Untertext", type: "textarea" },
-    { key: "email", label: "E-Mail", type: "text" },
-    { key: "phone", label: "Telefon", type: "text" },
-    { key: "location", label: "Ort", type: "text" },
-  ],
-  process: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "body", label: "Text", type: "textarea" },
-    { key: "steps", label: "Schritte", type: "list", itemLabel: "Schritt", itemFields: [
-      { key: "number", label: "Nummer", type: "text" },
-      { key: "title", label: "Titel", type: "text" },
-      { key: "duration", label: "Dauer", type: "text" },
-      { key: "description", label: "Beschreibung", type: "textarea" },
-      { key: "detail", label: "Detail", type: "textarea" },
-      { key: "outcome", label: "Ergebnis", type: "textarea" },
-    ] },
-  ],
-  consulting: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "body", label: "Text", type: "textarea" },
-    { key: "primaryCta", label: "Button (primär)", type: "text" },
-    { key: "secondaryCta", label: "Button (sekundär)", type: "text" },
-  ],
-  footer: [
-    { key: "slogan", label: "Slogan", type: "text" },
-    { key: "tagline", label: "Tagline", type: "text" },
-    { key: "nav", label: "Navigation-Titel", type: "text" },
-    { key: "contactTitle", label: "Kontakt-Titel", type: "text" },
-    { key: "copyright", label: "Copyright", type: "text" },
-    { key: "impressum", label: "Impressum-Label", type: "text" },
-    { key: "datenschutz", label: "Datenschutz-Label", type: "text" },
-    { key: "pricing", label: "Preise-Label", type: "text" },
-  ],
-  pricing: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "sub", label: "Untertext", type: "textarea" },
-    { key: "teaserLabel", label: "Teaser-Label", type: "text" },
-    { key: "teaserHeadline", label: "Teaser-Überschrift", type: "text" },
-    { key: "teaserHeadlineAccent", label: "Teaser-Überschrift (Akzent)", type: "text" },
-    { key: "teaserSub", label: "Teaser-Untertext", type: "textarea" },
-    { key: "teaserCta", label: "Teaser-Button", type: "text" },
-    { key: "teaserFromLabel", label: "„ab“-Label", type: "text" },
-    { key: "hourSuffix", label: "Stunden-Suffix", type: "text" },
-    { key: "includesLabel", label: "„Beinhaltet“-Label", type: "text" },
-    { key: "items", label: "Pakete", type: "list", itemLabel: "Paket", itemFields: [
-      { key: "title", label: "Titel", type: "text" },
-      { key: "rate", label: "Stundensatz (€)", type: "number" },
-      { key: "description", label: "Beschreibung", type: "textarea" },
-      { key: "includes", label: "Beinhaltet", type: "stringlist", itemLabel: "Punkt" },
-      { key: "highlight", label: "Hervorheben", type: "checkbox" },
-    ] },
-    { key: "notesTitle", label: "Hinweise-Titel", type: "text" },
-    { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
-    { key: "ctaTitle", label: "CTA-Titel", type: "text" },
-    { key: "ctaSub", label: "CTA-Untertext", type: "textarea" },
-    { key: "ctaButton", label: "CTA-Button", type: "text" },
-    { key: "back", label: "Zurück-Label", type: "text" },
-  ],
-  // The legal pages. One markdown field rather than a structured schema:
-  // headings and lists are part of the text here, not a form somebody should
-  // have to fill in section by section. Leaving a block empty keeps the version
-  // committed in the site's repository — for a legal page that fallback is the
-  // point, since a silently blank privacy notice is worse than a stale one.
-  legal_impressum: [
-    { key: "markdown", label: "Impressum (Markdown)", type: "textarea" },
-  ],
-  legal_datenschutz: [
-    { key: "markdown", label: "Datenschutzerklärung (Markdown)", type: "textarea" },
-  ],
-};
+// in SECTION_SCHEMAS falls back to the JSON editor, and a Form/JSON toggle is
+// always available. The schemas themselves live in `sections.ts`, next to the
+// page model that decides where each section is shown.
 
 type Obj = Record<string, unknown>;
 
 /** A single typed leaf input; emits the correctly-typed value (string/number/bool). */
-function LeafInput({ field, value, onChange }: { field: LeafField; value: unknown; onChange: (v: unknown) => void }) {
+function LeafInput({
+  field,
+  value,
+  onChange,
+}: {
+  field: LeafField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
   if (field.type === "checkbox") {
-    return <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />;
+    return (
+      <input type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
+    );
   }
   if (field.type === "number") {
     return (
-      <input className="field-boxed"
+      <input
+        className="field-boxed"
         type="number"
         value={value === undefined || value === null || value === "" ? "" : String(value)}
         onChange={(e) => onChange(e.target.value === "" ? null : Number(e.target.value))}
@@ -251,23 +183,56 @@ function LeafInput({ field, value, onChange }: { field: LeafField; value: unknow
     );
   }
   if (field.type === "textarea") {
-    return <textarea className="field-boxed" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} rows={3} />;
+    return (
+      <textarea
+        className="field-boxed"
+        value={String(value ?? "")}
+        onChange={(e) => onChange(e.target.value)}
+        rows={3}
+      />
+    );
   }
-  return <input className="field-boxed" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />;
+  return (
+    <input className="field-boxed" value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />
+  );
 }
 
 /** Editor for an array of plain strings (e.g. pricing `includes` / `notes`). */
-function StringListEditor({ field, items, onChange }: { field: StringListField; items: string[]; onChange: (v: string[]) => void }) {
+function StringListEditor({
+  field,
+  items,
+  onChange,
+}: {
+  field: StringListField;
+  items: string[];
+  onChange: (v: string[]) => void;
+}) {
   return (
     <div className="cms-form__stringlist">
       <div className="flex items-center justify-between">
         <span className="text-sm">{field.label}</span>
-        <button type="button" className="btn btn-ghost text-xs" onClick={() => onChange([...items, ""])}>+ {field.itemLabel}</button>
+        <button
+          type="button"
+          className="btn btn-ghost text-xs"
+          onClick={() => onChange([...items, ""])}
+        >
+          + {field.itemLabel}
+        </button>
       </div>
       {items.map((s, i) => (
         <div key={i} className="flex flex-wrap gap-2">
-          <input className="field-boxed" value={s} onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))} />
-          <button type="button" className="btn btn-danger text-xs" onClick={() => onChange(items.filter((_, idx) => idx !== i))}>×</button>
+          <input
+            className="field-boxed"
+            value={s}
+            onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))}
+          />
+          <button
+            type="button"
+            className="btn btn-danger text-xs"
+            onClick={() => onChange(items.filter((_, idx) => idx !== i))}
+          >
+            ×
+          </button>
         </div>
       ))}
     </div>
@@ -275,7 +240,15 @@ function StringListEditor({ field, items, onChange }: { field: StringListField; 
 }
 
 /** Render one field (leaf / string-list / object-list) bound to `value[field.key]`. */
-function FieldEditor({ field, value, onChange }: { field: LeafField | StringListField; value: unknown; onChange: (v: unknown) => void }) {
+function FieldEditor({
+  field,
+  value,
+  onChange,
+}: {
+  field: LeafField | StringListField;
+  value: unknown;
+  onChange: (v: unknown) => void;
+}) {
   if (field.type === "stringlist") {
     return (
       <StringListEditor
@@ -293,18 +266,37 @@ function FieldEditor({ field, value, onChange }: { field: LeafField | StringList
   );
 }
 
-function ListEditor({ field, items, onChange }: { field: ObjectListField; items: Obj[]; onChange: (items: Obj[]) => void }) {
+function ListEditor({
+  field,
+  items,
+  onChange,
+}: {
+  field: Extract<Field, { type: "list" }>;
+  items: Obj[];
+  onChange: (items: Obj[]) => void;
+}) {
   const update = (i: number, key: string, v: unknown) =>
     onChange(items.map((it, idx) => (idx === i ? { ...it, [key]: v } : it)));
   const blank = (): Obj =>
-    Object.fromEntries(field.itemFields.map((f) => [f.key, f.type === "stringlist" ? [] : f.type === "checkbox" ? false : ""]));
+    Object.fromEntries(
+      field.itemFields.map((f) => [
+        f.key,
+        f.type === "stringlist" ? [] : f.type === "checkbox" ? false : f.type === "number" ? null : "",
+      ]),
+    );
   const remove = (i: number) => onChange(items.filter((_, idx) => idx !== i));
 
   return (
     <div className="tds-stack">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium">{field.label}</span>
-        <button type="button" className="btn btn-ghost text-xs" onClick={() => onChange([...items, blank()])}>+ {field.itemLabel}</button>
+        <button
+          type="button"
+          className="btn btn-ghost text-xs"
+          onClick={() => onChange([...items, blank()])}
+        >
+          + {field.itemLabel}
+        </button>
       </div>
       {items.length === 0 ? <p className="text-xs opacity-60">Noch keine Einträge.</p> : null}
       {items.map((it, i) => (
@@ -312,14 +304,24 @@ function ListEditor({ field, items, onChange }: { field: ObjectListField; items:
           {field.itemFields.map((f) => (
             <FieldEditor key={f.key} field={f} value={it[f.key]} onChange={(v) => update(i, f.key, v)} />
           ))}
-          <button type="button" className="btn btn-danger text-xs" onClick={() => remove(i)}>Eintrag entfernen</button>
+          <button type="button" className="btn btn-danger text-xs" onClick={() => remove(i)}>
+            Eintrag entfernen
+          </button>
         </div>
       ))}
     </div>
   );
 }
 
-function StructuredForm({ schema, value, onChange }: { schema: Field[]; value: Obj; onChange: (v: Obj) => void }) {
+function StructuredForm({
+  schema,
+  value,
+  onChange,
+}: {
+  schema: Field[];
+  value: Obj;
+  onChange: (v: Obj) => void;
+}) {
   const setField = (key: string, v: unknown) => onChange({ ...value, [key]: v });
   return (
     <div className="cms-form space-y-3">
@@ -339,64 +341,275 @@ function StructuredForm({ schema, value, onChange }: { schema: Field[]; value: O
   );
 }
 
-function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
-  const [blocks, setBlocks] = useState<BlockMeta[] | null>(null);
-  const [sectionKey, setSectionKey] = useState("");
-  const [lang, setLang] = useState("de");
-  const [json, setJson] = useState("{}");
-  const [value, setValue] = useState<Obj>({});
-  const [mode, setMode] = useState<"form" | "json">("json");
-  const [status, setStatus] = useState<string | null>(null);
-  const [rebuildRepo, setRebuildRepo] = useState(site.rebuild_repo ?? "");
-  const [rebuildWorkflow, setRebuildWorkflow] = useState(site.rebuild_workflow ?? "dev.yml");
-  const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
-  const [cacheUrl, setCacheUrl] = useState(site.cache_url ?? "");
-  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
+/** The pages and sections of one site, plus the editor for the chosen section. */
+function SiteEditor({ site }: { site: Site }) {
+  const blocksQuery = useCachedJson<{ blocks: BlockMeta[] }>(`/cms/${site.site_key}/blocks`);
+  const blocks = useMemo(() => blocksQuery.data?.blocks ?? [], [blocksQuery.data]);
+
+  const [pageId, setPageId] = useState<string | null>(null);
+  const [sectionKey, setSectionKey] = useState<string | null>(null);
+  const [lang, setLang] = useState<"de" | "en">("de");
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
+  const blocksVisiblyStale =
+    blocksQuery.stale || (blocksQuery.error !== null && blocksQuery.data !== undefined);
+
+  // Which section keys this site actually has, in a stable order.
+  const sectionKeys = useMemo(
+    () => [...new Set(blocks.map((b) => b.section_key))],
+    [blocks],
+  );
+  const pages = useMemo(() => resolvePages(sectionKeys), [sectionKeys]);
+
+  useEffect(() => {
+    if (pages.length === 0) {
+      if (pageId !== null) setPageId(null);
+      return;
+    }
+    if (pageId === null || !pages.some((p) => p.id === pageId)) {
+      setPageId(pages[0]?.id ?? null);
+    }
+  }, [pages, pageId]);
+
+  const page = pages.find((p) => p.id === pageId) ?? null;
+
+  const isMachine = (key: string, l: string): boolean =>
+    Boolean(blocks.find((b) => b.section_key === key && b.lang === l)?.machine_translated);
+
+  const isStored = (key: string, l: string): boolean =>
+    blocks.some((b) => b.section_key === key && b.lang === l);
 
   const backfill = async () => {
     setBackfillStatus("Übersetzungen werden erzeugt …");
-    const res = await api(`/cms/sites/${site.site_key}/translations/backfill`, { method: "POST" });
-    if (res.ok) {
-      const d = await res.json().catch(() => ({}));
+    let res: Response;
+    try {
+      res = await api(`/cms/sites/${site.site_key}/translations/backfill`, { method: "POST" });
+    } catch {
       setBackfillStatus(null);
-      toast.success(`Fertig: ${d.created ?? 0} erstellt, ${d.skipped ?? 0} übersprungen.`);
-      loadBlocks();
+      toast.danger("Übersetzungslauf fehlgeschlagen (Netzwerkfehler).");
+      return;
+    }
+    if (res.ok) {
+      const d = (await res.json().catch(() => ({}))) as {
+        created?: number;
+        skipped?: number;
+        cached?: boolean;
+      };
+      setBackfillStatus(null);
+      const created = d.created ?? 0;
+      const cacheResult =
+        created === 0
+          ? ""
+          : d.cached === true
+            ? " Cache-Neubau für die betroffenen Seiten wurde angestoßen."
+            : " Der Seiten-Cache konnte nicht angestoßen werden.";
+      toast.success(`Fertig: ${created} erstellt, ${d.skipped ?? 0} übersprungen.${cacheResult}`);
+      invalidate(`/cms/${site.site_key}/`);
     } else if (res.status === 503) {
-      setBackfillStatus("Automatische Übersetzung ist nicht konfiguriert (WEBSITE_DEEPL_API_KEY).");
+      setBackfillStatus("Automatische Übersetzung ist nicht konfiguriert (Einstellungen → Website-CMS).");
     } else {
       setBackfillStatus(null);
       toast.danger(`Übersetzungslauf fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
-  const loadBlocks = () =>
-    api(`/cms/${site.site_key}/blocks`)
-      .then((r) => (r.ok ? r.json() : { blocks: [] }))
-      .then((d) => setBlocks(d.blocks ?? []))
-      .catch(() => setBlocks([]));
+  return (
+    <div className="cms-editor tds-stack">
+      {blocksQuery.error ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          Inhalte konnten nicht aktualisiert werden ({blocksQuery.error.message}).
+          {blocks.length > 0 ? " Die angezeigten Daten sind möglicherweise veraltet." : ""}
+        </p>
+      ) : null}
+
+      {blocksQuery.loading ? (
+        <p>
+          <Spinner />
+        </p>
+      ) : (
+        <>
+          {blocks.length === 0 && !blocksQuery.error ? (
+            <p className="tds-alert">
+              Noch keine eigenen Inhalte gespeichert. Die öffentliche Website verwendet ihre
+              eingebauten Vorgaben; jeder Abschnitt kann hier erstmals angelegt werden.
+            </p>
+          ) : null}
+          <nav
+            className={staleClass(blocksVisiblyStale, "tds-toolbar")}
+            aria-busy={blocksVisiblyStale}
+            aria-label="Seite wählen"
+          >
+            {pages.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={p.id === pageId ? "chip chip--info" : "chip chip--neutral"}
+                aria-pressed={p.id === pageId}
+                onClick={() => {
+                  setPageId(p.id);
+                  setSectionKey(null);
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
+          </nav>
+
+          {page ? (
+            <PageSections
+              page={page}
+              stale={blocksVisiblyStale}
+              activeSection={sectionKey}
+              activeLang={lang}
+              isMachine={isMachine}
+              isStored={isStored}
+              onPick={(key, l) => {
+                setSectionKey(key);
+                setLang(l);
+              }}
+            />
+          ) : null}
+
+          {page && sectionKey ? (
+            <BlockEditor
+              siteKey={site.site_key}
+              sectionKey={sectionKey}
+              lang={lang}
+              onLangChange={setLang}
+              cacheConfigured={Boolean((site.cache_url ?? "").trim())}
+            />
+          ) : (
+            <p className="marginalia">Einen Abschnitt wählen, um ihn zu bearbeiten.</p>
+          )}
+        </>
+      )}
+
+      {/* The legal PDFs belong to the same site and are edited here rather than
+          in Einstellungen: an uploaded AGB is content, not configuration. */}
+      <LegalDocs siteKey={site.site_key} />
+
+      <div className="cms-editor__translate">
+        <h3>Automatische Übersetzung</h3>
+        <p className="marginalia">
+          Beim Speichern eines Abschnitts wird die Gegensprache per DeepL erzeugt (Schlüssel
+          unter Einstellungen → Website-CMS). Vorhandene Abschnitte lassen sich hier nachziehen.
+        </p>
+        {backfillStatus ? (
+          <p className="tds-alert" role="status">
+            {backfillStatus}
+          </p>
+        ) : null}
+        <button className="btn btn-primary" type="button" onClick={backfill}>
+          Übersetzungen nachziehen
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** The sections of one page, each with the languages it exists in. */
+function PageSections({
+  page,
+  stale,
+  activeSection,
+  activeLang,
+  isMachine,
+  isStored,
+  onPick,
+}: {
+  page: ResolvedPage;
+  stale: boolean;
+  activeSection: string | null;
+  activeLang: "de" | "en";
+  isMachine: (key: string, lang: string) => boolean;
+  isStored: (key: string, lang: string) => boolean;
+  onPick: (key: string, lang: "de" | "en") => void;
+}) {
+  return (
+    <div className={staleClass(stale, "tds-card tds-stack")} aria-busy={stale}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3>{page.label}</h3>
+        {/* The public path, so nobody has to guess which page they are editing.
+            Blank for the leftovers bucket, which is not a page at all. */}
+        {page.path ? <code className="text-xs opacity-70">{page.path}</code> : null}
+      </div>
+      <ul className="tds-list">
+        {page.present.map((key) => (
+          <li key={key} className="tds-list__row">
+            <span className="flex flex-wrap items-center gap-2">
+              <strong>{sectionLabel(key)}</strong>
+              <code className="text-xs opacity-70">{key}</code>
+            </span>
+            <span className="flex flex-wrap items-center gap-1">
+              {(["de", "en"] as const).map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  className={
+                    activeSection === key && activeLang === l
+                      ? "btn btn-primary text-xs"
+                      : "btn btn-ghost text-xs"
+                  }
+                  onClick={() => onPick(key, l === "en" ? "en" : "de")}
+                >
+                  {l.toUpperCase()}
+                  {isMachine(key, l) ? " · auto" : !isStored(key, l) ? " · Vorgabe" : ""}
+                </button>
+              ))}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Load, edit and save one block; a save re-renders only the pages it affects. */
+function BlockEditor({
+  siteKey,
+  sectionKey,
+  lang,
+  onLangChange,
+  cacheConfigured,
+}: {
+  siteKey: string;
+  sectionKey: string;
+  lang: "de" | "en";
+  onLangChange: (lang: "de" | "en") => void;
+  cacheConfigured: boolean;
+}) {
+  const path = `/cms/${siteKey}/blocks/${sectionKey}?lang=${lang}`;
+  const blockQuery = useCachedJson<{ value: unknown }>(path);
+
+  const [value, setValue] = useState<Obj>({});
+  const [json, setJson] = useState("{}");
+  const [mode, setMode] = useState<"form" | "json">("form");
+  const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [seededPath, setSeededPath] = useState<string | null>(null);
+  // Which loaded document the form was seeded from. A background SWR answer
+  // may refresh an untouched form, but it must never discard half-typed edits.
+  const [seededFrom, setSeededFrom] = useState<string | null>(null);
+
+  const schema = SECTION_SCHEMAS[sectionKey];
+  const blockVisiblyStale =
+    blockQuery.stale || (blockQuery.error !== null && blockQuery.data !== undefined);
 
   useEffect(() => {
-    loadBlocks();
-  }, []);
-
-  const setSection = (key: string) => {
-    setSectionKey(key);
-    // A known section opens in the structured form; others in raw JSON.
-    setMode(SECTION_SCHEMAS[key] ? "form" : "json");
-  };
-
-  const openBlock = async (key: string, l: string) => {
-    setSectionKey(key);
-    setLang(l);
-    setStatus(null);
-    const res = await api(`/cms/${site.site_key}/blocks/${key}?lang=${l}`);
-    const d = res.ok ? await res.json() : { value: null };
-    const obj: Obj = d.value && typeof d.value === "object" && !Array.isArray(d.value) ? d.value : {};
+    if (blockQuery.data === undefined) return;
+    const raw = blockQuery.data.value;
+    const obj: Obj = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Obj) : {};
+    const signature = `${path}::${JSON.stringify(obj)}`;
+    const pathChanged = seededPath !== path;
+    if (!pathChanged && (dirty || signature === seededFrom)) return;
     setValue(obj);
     setJson(JSON.stringify(obj, null, 2));
-    setMode(SECTION_SCHEMAS[key] ? "form" : "json");
-  };
+    setMode(schema ? "form" : "json");
+    setStatus(null);
+    setDirty(false);
+    setSeededPath(path);
+    setSeededFrom(signature);
+  }, [blockQuery.data, dirty, path, schema, seededFrom, seededPath]);
 
   /** Resolve the object to save from whichever mode is active. */
   const currentValue = (): Obj | null => {
@@ -411,7 +624,6 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
   };
 
   const toForm = () => {
-    // Entering the form: seed it from the JSON text (best-effort).
     const v = currentValue();
     if (v === null) {
       setStatus("Ungültiges JSON — Formular nicht verfügbar.");
@@ -428,203 +640,141 @@ function SiteEditor({ site, onBack }: { site: Site; onBack: () => void }) {
   };
 
   const save = async () => {
-    if (!/^[a-z0-9_-]{1,64}$/.test(sectionKey)) {
-      setStatus("Ungültiger Section-Key.");
-      return;
-    }
     const v = currentValue();
     if (v === null) {
       setStatus("Wert muss ein gültiges JSON-Objekt sein.");
       return;
     }
-    const res = await api(`/cms/${site.site_key}/blocks/${sectionKey}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: v, lang }),
-    });
-    if (res.ok) toast.success("Gespeichert (Rebuild ausgelöst, falls konfiguriert).");
-    else toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
-    if (res.ok) loadBlocks();
-  };
-
-  const saveRebuildConfig = async () => {
-    const res = await api(`/cms/sites/${site.site_key}/rebuild-config`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        rebuild_repo: rebuildRepo.trim(),
-        rebuild_workflow: rebuildWorkflow.trim(),
-        cache_url: cacheUrl.trim(),
-      }),
-    });
-    if (res.ok) toast.success("Rebuild-Konfiguration gespeichert.");
-    else toast.danger(`Rebuild-Konfiguration konnte nicht gespeichert werden (HTTP ${res.status}).`);
-  };
-
-  const rebuildNow = async () => {
-    setRebuildStatus("Rebuild wird ausgelöst …");
-    const res = await api(`/cms/sites/${site.site_key}/rebuild`, { method: "POST" });
-    if (res.ok) {
-      setRebuildStatus(null);
-      toast.success("Rebuild ausgelöst.");
-    } else if (res.status === 503) {
-      setRebuildStatus("Kein Rebuild-Token konfiguriert (WEBSITE_REBUILD_TOKEN).");
-    } else if (res.status === 422) {
-      setRebuildStatus("Für diese Website ist kein Repository hinterlegt.");
-    } else {
-      setRebuildStatus(null);
-      toast.danger(`Rebuild fehlgeschlagen (HTTP ${res.status}).`);
+    setBusy(true);
+    let res: Response;
+    try {
+      res = await api(`/cms/${siteKey}/blocks/${sectionKey}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: v, lang }),
+      });
+    } catch {
+      setBusy(false);
+      toast.danger("Speichern fehlgeschlagen (Netzwerkfehler). Der Inhalt wurde nicht bestätigt.");
+      return;
     }
-  };
-
-  const rebuildCache = async () => {
-    setCacheStatus("Seiten-Cache wird neu gebaut …");
-    const res = await api(`/cms/sites/${site.site_key}/cache/rebuild`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ all: true }),
-    });
-    if (res.ok) {
-      setCacheStatus(null);
-      toast.success("Seiten-Cache wird neu gebaut.");
-    } else if (res.status === 422) {
-      // In the flow, not as a toast: this is a persistent configuration gap,
-      // and a vanishing message would leave the operator pressing a button
-      // that can never work.
-      setCacheStatus("Für diese Website ist keine Cache-URL hinterlegt.");
-    } else {
-      setCacheStatus(null);
-      toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
+    setBusy(false);
+    if (!res.ok) {
+      // Never swallow the status: it is what tells "session expired" from
+      // "service down" apart in a bug report.
+      toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
+      return;
     }
+    const body = (await res.json().catch(() => ({}))) as { cached?: boolean };
+    // The API reports whether a page-cache rebuild really went out. Saying
+    // "wird neu gebaut" on a site with no cache URL would be a success message
+    // for a request nobody sent.
+    toast.success(
+      body.cached === true
+        ? "Gespeichert. Der Cache-Neubau für die betroffenen Seiten wurde angestoßen."
+        : cacheConfigured
+          ? "Gespeichert. Der Seiten-Cache konnte nicht angestoßen werden."
+          : "Gespeichert. Für diese Website ist kein Seiten-Cache hinterlegt.",
+    );
+    // Drop this site's cached reads so the section list picks up the new
+    // timestamp and the auto-translation flag.
+    invalidate(`/cms/${siteKey}/`);
+    setValue(v);
+    setJson(JSON.stringify(v, null, 2));
+    setDirty(false);
+    setSeededPath(path);
+    setSeededFrom(`${path}::${JSON.stringify(v)}`);
   };
 
   return (
-    <div className="cms-editor">
-      <button className="btn btn-ghost" type="button" onClick={onBack}>← Websites</button>
-      <h2>{site.name}</h2>
-
-      <div className="cms-editor__blocks">
-        <h3>Sektionen</h3>
-        {blocks === null ? (
-          <p><Spinner /></p>
-        ) : blocks.length === 0 ? (
-          <p>Noch keine Blöcke.</p>
-        ) : (
-          <ul>
-            {blocks.map((b) => (
-              <li key={`${b.section_key}-${b.lang}`}>
-                <button className="btn btn-ghost" type="button" onClick={() => openBlock(b.section_key, b.lang)}>
-                  <code>{b.section_key}</code> <span className="chip chip--neutral">{b.lang}</span>
-                  {b.machine_translated ? (
-                    <span className="chip chip--info" title="Automatisch übersetzt">Auto</span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
-      <div className="tds-stack">
-        <div className="flex items-center justify-between">
-          <h3>Block bearbeiten</h3>
-          {SECTION_SCHEMAS[sectionKey] ? (
-            <button type="button" className="btn btn-ghost text-xs" onClick={() => (mode === "form" ? toJson() : toForm())}>
-              {mode === "form" ? "JSON bearbeiten" : "Formular"}
-            </button>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <input className="field-boxed" value={sectionKey} onChange={(e) => setSection(e.target.value)} placeholder="section-key (z. B. faq)" />
+    <div className="tds-card tds-stack">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3>
+          {sectionLabel(sectionKey)} <code className="text-xs opacity-70">{sectionKey}</code>
+        </h3>
+        <span className="flex flex-wrap items-center gap-2">
           <select
             className="field-boxed"
-            aria-label="Sprache des Blocks"
+            aria-label="Sprache des Abschnitts"
             value={lang}
-            onChange={(e) => setLang(e.target.value)}
+            onChange={(e) => onLangChange(e.target.value === "en" ? "en" : "de")}
           >
             <option value="de">de</option>
             <option value="en">en</option>
           </select>
-        </div>
-        {mode === "form" && SECTION_SCHEMAS[sectionKey] ? (
-          <StructuredForm schema={SECTION_SCHEMAS[sectionKey]!} value={value} onChange={setValue} />
-        ) : (
-          <textarea
-            className="field-boxed"
-            aria-label="JSON"
-            value={json}
-            onChange={(e) => setJson(e.target.value)}
-            rows={14}
-            spellCheck={false}
-          />
-        )}
-        {/* Validation only now — outcomes are toasts. */}
-        {status ? <p className="tds-alert tds-alert--danger" role="alert">{status}</p> : null}
-        <button className="btn btn-primary" type="button" onClick={save}>Speichern</button>
+          {schema ? (
+            <button
+              type="button"
+              className="btn btn-ghost text-xs"
+              onClick={() => (mode === "form" ? toJson() : toForm())}
+            >
+              {mode === "form" ? "JSON bearbeiten" : "Formular"}
+            </button>
+          ) : null}
+        </span>
       </div>
 
-      <div className="cms-editor__translate">
-        <h3>Automatische Übersetzung</h3>
-        <p className="marginalia">
-          Beim Speichern eines Blocks wird die Gegensprache per DeepL erzeugt (Schlüssel
-          serverseitig via <code>WEBSITE_DEEPL_API_KEY</code>). Vorhandene Blöcke lassen
-          sich hier nachziehen.
+      {blockQuery.loading ? (
+        <p>
+          <Spinner />
         </p>
-        {backfillStatus ? <p className="tds-alert" role="status">{backfillStatus}</p> : null}
-        <button className="btn btn-primary" type="button" onClick={backfill}>Übersetzungen nachziehen</button>
-      </div>
+      ) : (
+        <div className={staleClass(blockVisiblyStale)} aria-busy={blockVisiblyStale}>
+          {blockQuery.data?.value === null ? (
+            <p className="marginalia">
+              Für {lang.toUpperCase()} ist noch kein eigener Inhalt gespeichert; die Website
+              verwendet ihre eingebaute Vorgabe.
+            </p>
+          ) : null}
+          {mode === "form" && schema ? (
+            <StructuredForm
+              schema={schema}
+              value={value}
+              onChange={(next) => {
+                setValue(next);
+                setDirty(true);
+              }}
+            />
+          ) : (
+            <textarea
+              className="field-boxed"
+              aria-label="JSON"
+              value={json}
+              onChange={(e) => {
+                setJson(e.target.value);
+                setDirty(true);
+              }}
+              rows={14}
+              spellCheck={false}
+            />
+          )}
+        </div>
+      )}
 
-      <LegalDocs siteKey={site.site_key} />
-
-      <div className="cms-editor__rebuild">
-        <h3>Rebuild-Konfiguration</h3>
-        <p className="marginalia">
-          Repository (<code>owner/name</code>) und Workflow-Datei, die ein Speichern neu baut.
-          Der Token wird serverseitig über <code>WEBSITE_REBUILD_TOKEN</code> bereitgestellt.
+      {blockQuery.error ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          Abschnitt konnte nicht geladen werden ({blockQuery.error.message}).
         </p>
-        <div className="flex flex-wrap gap-2">
-          <input className="field-boxed"
-            value={rebuildRepo}
-            onChange={(e) => setRebuildRepo(e.target.value)}
-            placeholder="Tracht-Digital-Solutions/tds-landingpage-frontend"
-          />
-          <input className="field-boxed"
-            value={rebuildWorkflow}
-            onChange={(e) => setRebuildWorkflow(e.target.value)}
-            placeholder="dev.yml"
-          />
-        </div>
-        {rebuildStatus ? <p className="tds-alert" role="status">{rebuildStatus}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Konfiguration speichern</button>
-          <button className="btn btn-primary" type="button" onClick={rebuildNow}>Jetzt neu bauen</button>
-        </div>
-      </div>
-
-      <div className="cms-editor__rebuild">
-        <h3>Seiten-Cache</h3>
-        <p className="marginalia">
-          Die öffentliche Website rendert auf Anfrage und legt jede Seite als Datei ab.
-          Ein Speichern baut den Cache der betroffenen Seiten automatisch neu — dieser
-          Knopf ist für den Fall, dass etwas dazwischenkam.
-          {" "}
-          <strong>Nicht dasselbe wie „Jetzt neu bauen"</strong>: das stößt einen CI-Build
-          an und liefert Code aus, der Cache-Neubau rendert in Sekunden aus bereits
-          gespeichertem Inhalt.
+      ) : null}
+      {/* Validation only here — outcomes are toasts. */}
+      {status ? (
+        <p className="tds-alert tds-alert--danger" role="alert">
+          {status}
         </p>
-        <div className="flex flex-wrap gap-2">
-          <input className="field-boxed"
-            value={cacheUrl}
-            onChange={(e) => setCacheUrl(e.target.value)}
-            placeholder="https://tracht-digital.de"
-            aria-label="Adresse der öffentlichen Website"
-          />
-        </div>
-        {cacheStatus ? <p className="tds-alert" role="status">{cacheStatus}</p> : null}
-        <div className="flex flex-wrap gap-2">
-          <button className="btn btn-primary" type="button" onClick={saveRebuildConfig}>Adresse speichern</button>
-          <button className="btn btn-accent" type="button" onClick={rebuildCache}>Seiten-Cache neu bauen</button>
-        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={save}
+          disabled={busy || blockQuery.loading || blockQuery.data === undefined}
+        >
+          {busy ? <Spinner size="sm" /> : "Speichern"}
+        </button>
+        <span className="marginalia">
+          Speichern baut nur die betroffenen Seiten neu, nicht die ganze Website.
+        </span>
       </div>
     </div>
   );

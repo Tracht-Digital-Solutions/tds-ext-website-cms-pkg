@@ -21,12 +21,12 @@ return [
         'method' => 'GET',
         'pattern' => '/content/landing',
         'tag' => 'Öffentlich',
-        'summary' => 'Redaktionelle Blöcke der Standard-Site (Build-Quelle der öffentlichen Seiten)',
+        'summary' => 'Redaktionelle Blöcke der Standard-Site für die öffentlichen Seiten',
         'description' => 'Die Nachfolgerin von `tds-content-api`s offener `/content/landing`, '
             . 'unter demselben Pfad, damit Landingpage und Blog **unverändert** '
             . 'weiterlesen. Unauthentifiziert und lesend. **Ein Datenbankproblem gibt '
-            . 'leere Blöcke zurück, niemals 500** — der statische Build fällt dann auf '
-            . 'seine eingebauten Vorgaben zurück, statt zu scheitern. Die Kehrseite: '
+            . 'leere Blöcke zurück, niemals 500** — die öffentliche Seite fällt dann auf '
+            . 'ihre eingebauten Vorgaben zurück, statt zu scheitern. Die Kehrseite: '
             . 'eine kaputte Datenbank sieht wie „kein Inhalt gepflegt" aus.',
         'auth' => 'public',
         'params' => [$langQuery],
@@ -39,13 +39,13 @@ return [
         'pattern' => '/content/legal',
         'tag' => 'Öffentlich',
         'summary' => 'Welche Rechtsdokumente für die Standard-Site hinterlegt sind',
-        'description' => 'Nur Metadaten (Dateiname, Größe, Stand), keine Bytes. Der '
-            . 'Landingpage-Build entscheidet damit, ob er die hochgeladene AGB einbackt '
-            . 'oder die mitcommittete Rückfalldatei, und rendert das „Stand: …"-Label. '
+        'description' => 'Nur Metadaten (Dateiname, Größe, Stand), keine Bytes. Die '
+            . 'Landingpage entscheidet damit beim Rendern, ob sie die hochgeladene AGB '
+            . 'oder die mitcommittete Rückfalldatei ausliefert, und rendert das „Stand: …"-Label. '
             . 'Gleiche Ausfallsicherheit wie `/content/landing`.',
         'auth' => 'public',
         'responses' => [
-            ['status' => 200, 'description' => '`{docs: {<key>: {<lang>: {filename, size, updated_at}}}}` — verschachtelte Objekte, auch wenn leer.'],
+            ['status' => 200, 'description' => '`{docs: {<key>: {<lang>: {filename, sizeBytes, versionLabel, updatedAt}}}}` — verschachtelte Objekte, auch wenn leer.'],
         ],
     ],
     [
@@ -53,7 +53,7 @@ return [
         'pattern' => '/content/legal/{key:[a-z0-9-]+}.pdf',
         'tag' => 'Öffentlich',
         'summary' => 'Ein Rechtsdokument der Standard-Site herunterladen',
-        'description' => 'Die Bytes selbst — das, was der Landingpage-Build zieht und was '
+        'description' => 'Die Bytes selbst — das, was die Landingpage beim Rendern lädt und was '
             . 'ein Besucher direkt aufrufen kann. Immer die Standard-Site; für eine '
             . 'zweite Site gibt es die Vorschau-Route auf der Verwaltungsseite.',
         'auth' => 'public',
@@ -74,7 +74,7 @@ return [
         'permission' => 'website:read',
         'params' => [$site],
         'responses' => [
-            ['status' => 200, 'description' => '`{docs: [{docKey, lang, filename, size, updated_at}]}`'],
+            ['status' => 200, 'description' => '`{docs: [{docKey, lang, filename, sizeBytes, versionLabel, updatedAt}]}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:read`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
@@ -99,7 +99,7 @@ return [
             ['in' => 'body', 'name' => 'lang', 'type' => 'de|en', 'description' => 'Sprachfassung; Vorgabe `de`.'],
         ],
         'responses' => [
-            ['status' => 200, 'description' => 'Die Metadaten des gespeicherten Dokuments.'],
+            ['status' => 201, 'description' => '`{ok: true, cached: bool}` — `cached` sagt, ob der gezielte Seiten-Cache-Neubau angefragt wurde.'],
             ['status' => 400, 'description' => 'Kein gültiges Feld `file` im Upload.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
@@ -119,7 +119,7 @@ return [
         'permission' => 'website:write',
         'params' => [$site, $docKey, ['in' => 'query', 'name' => 'lang', 'type' => 'de|en', 'description' => 'Sprachfassung; Vorgabe `de`.']],
         'responses' => [
-            ['status' => 200, 'description' => '`{ok: true}`'],
+            ['status' => 200, 'description' => '`{ok: true, cached: bool}` — `cached` sagt, ob der gezielte Seiten-Cache-Neubau angefragt wurde.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site oder kein Dokument für diese Sprache.'],
@@ -159,10 +159,10 @@ return [
         'method' => 'GET',
         'pattern' => '/cms/sites',
         'tag' => 'Sites',
-        'summary' => 'Alle Sites mit ihrer Rebuild-Konfiguration',
+        'summary' => 'Alle registrierten Sites mit ihrer Cache- und Rebuild-Konfiguration',
         'permission' => 'website:read',
         'responses' => [
-            ['status' => 200, 'description' => '`{sites: [{id, site_key, name, rebuild_repo, rebuild_workflow, is_default}]}`'],
+            ['status' => 200, 'description' => '`{sites: [{id, site_key, name, rebuild_repo, rebuild_workflow, cache_url, updated_at}]}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:read`.'],
         ],
@@ -222,8 +222,13 @@ return [
             . 'das `machine_translated`-Kennzeichen** (was hier gespeichert wird, ist '
             . 'redaktioneller Text), und es **legt die Gegensprache maschinell an oder '
             . 'frischt sie auf** (DeepL, best effort) — eine von Hand übersetzte Fassung '
-            . 'wird dabei nie überschrieben. Anschließend wird der Rebuild der Site '
-            . 'ausgelöst, sofern konfiguriert.',
+            . 'wird dabei nie überschrieben.'
+            . "\n\n" . 'Anschließend wird **nur der betroffene Seiten-Cache** neu gebaut: '
+            . 'gemeldet wird der Abschnitt (`{type:"block", id:"<key>"}`), und welche '
+            . 'Seiten das sind, entscheidet die öffentliche Website anhand ihrer eigenen '
+            . 'Routen-Tabelle. Wurde die Gegensprache im selben Aufruf maschinell '
+            . 'übersetzt, entfällt die Sprachangabe, damit auch die englische Seite neu '
+            . 'gerendert wird.',
         'permission' => 'website:write',
         'params' => [
             $site,
@@ -232,7 +237,10 @@ return [
             ['in' => 'body', 'name' => 'lang', 'type' => 'de|en', 'description' => 'Sprache des gespeicherten Inhalts; Vorgabe `de`.'],
         ],
         'responses' => [
-            ['status' => 200, 'description' => '`{ok: true}`'],
+            ['status' => 200, 'description' => '`{ok: true, translated: bool, cached: bool}` — '
+                . '`cached` sagt, ob wirklich ein Cache-Neubau rausgegangen ist (Cache-URL '
+                . 'und Token vorhanden). Ohne dieses Feld müsste die Oberfläche einen Erfolg '
+                . 'für eine Anfrage melden, die niemand abgeschickt hat.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
@@ -249,7 +257,7 @@ return [
         'permission' => 'website:write',
         'params' => [$site, $blockKey, $langQuery],
         'responses' => [
-            ['status' => 200, 'description' => '`{ok: true}`'],
+            ['status' => 200, 'description' => '`{ok: true, cached: bool}` — `cached` sagt, ob der gezielte Seiten-Cache-Neubau angefragt wurde.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
@@ -260,21 +268,22 @@ return [
         'pattern' => '/cms/sites/{site:[a-z0-9-]+}/rebuild-config',
         'tag' => 'Rebuild',
         'summary' => 'Rebuild-Ziel einer Site setzen',
-        'description' => 'Welches Repository und welcher Workflow nach einer Inhaltsänderung '
-            . 'gebaut werden. Leere Werte löschen die Konfiguration.',
+        'description' => 'Das optionale CI-Ziel für manuelle Code-/Design-Builds und die '
+            . 'öffentliche Origin für gezielte Seiten-Cache-Neubauten. Leere Werte löschen '
+            . 'die jeweilige Konfiguration; Inhaltsänderungen lösen keinen CI-Build aus.',
         'permission' => 'website:write',
         'params' => [
             $site,
             ['in' => 'body', 'name' => 'rebuild_repo', 'type' => 'string', 'description' => 'Muss `owner/name` sein. Leer löscht.'],
             ['in' => 'body', 'name' => 'rebuild_workflow', 'type' => 'string', 'description' => 'Dateiname des Workflows.'],
-            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Herkunft der öffentlichen Site für den Seiten-Cache (z. B. `https://tracht-digital.de`). Leer löscht.'],
+            ['in' => 'body', 'name' => 'cache_url', 'type' => 'string', 'description' => 'Reine http(s)-Origin der öffentlichen Site (z. B. `https://tracht-digital.de`). Zugangsdaten, Pfad, Query und Fragment sind verboten; `/` am Ende ist erlaubt. Leer löscht.'],
         ],
         'responses' => [
             ['status' => 200, 'description' => '`{ok: true}`'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
-            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine http(s)-URL.'],
+            ['status' => 422, 'description' => '`rebuild_repo` ist nicht `owner/name`, oder `cache_url` ist keine reine http(s)-Origin ohne Zugangsdaten, Pfad, Query oder Fragment.'],
         ],
     ],
     [
@@ -287,11 +296,11 @@ return [
             . 'Quellen** — sie werden übersprungen, sonst würde eine Übersetzung eine '
             . 'Übersetzung übersetzen. `skipped` zählt beides zusammen: bereits '
             . 'vorhandene Übersetzungen und maschinelle Zeilen. Nur wenn wirklich etwas '
-            . 'entstanden ist, wird der Rebuild ausgelöst.',
+            . 'entstanden ist, wird der Seiten-Cache der Site neu gebaut.',
         'permission' => 'website:write',
         'params' => [$site],
         'responses' => [
-            ['status' => 200, 'description' => '`{created, skipped}`'],
+            ['status' => 200, 'description' => '`{created, skipped, cached}` — `cached` sagt, ob bei neuen Übersetzungen ein Cache-Neubau angefragt wurde.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
@@ -309,7 +318,7 @@ return [
         'permission' => 'website:write',
         'params' => [$site],
         'responses' => [
-            ['status' => 200, 'description' => '`{ok: true}` — der Workflow wurde angestoßen.'],
+            ['status' => 202, 'description' => '`{ok: true}` — der Workflow wurde angestoßen.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
@@ -333,11 +342,12 @@ return [
             ['in' => 'body', 'name' => 'all', 'type' => 'bool', 'description' => 'Alles erfassen statt nur die Inhaltsblöcke.'],
         ],
         'responses' => [
-            ['status' => 202, 'description' => '`{ok: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
+            ['status' => 202, 'description' => '`{ok: true, cached: true}` — der Neubau wurde angefragt. Der Aufruf scheitert nie an einer nicht erreichbaren Site.'],
             ['status' => 401, 'description' => 'Keine Sitzung.'],
             ['status' => 403, 'description' => 'Kein `website:write`.'],
             ['status' => 404, 'description' => 'Unbekannte Site.'],
             ['status' => 422, 'description' => 'Für diese Site ist keine Cache-URL konfiguriert.'],
+            ['status' => 503, 'description' => 'Kein Cache-Token oder kein Cache-Dienst konfiguriert; es wurde keine Anfrage versendet.'],
         ],
     ],
 ];

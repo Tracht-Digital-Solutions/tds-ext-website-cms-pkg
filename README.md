@@ -1,69 +1,85 @@
 # tds-ext-website-cms-pkg
 
-The **Website-CMS** as a frontend extension, ported from `tds-content-api`'s
-`/landing` content-block model. It edits the **editable sections of the public
-sites**, stored as one JSON block per **site × section × language**; the static
-sites fetch these at build time and merge them over their tds-shared-pkg / local
-defaults (a missing block falls back to the default).
+The **Website-CMS** manages editable sections and legal PDFs for one or more
+public sites. Content is stored as one JSON block per **site × section ×
+language**. Public sites read it while rendering and merge it over their local
+defaults, so an absent block remains a deliberate, working default rather than
+an empty page.
 
-**1:n sites:** a `cms_site` registry lets one frontend manage several websites;
-blocks are scoped to a site.
+## Editing model
 
-## Surface (checkpoint-1)
+- **Einstellungen → Website-CMS** is the site registry. This is the only place
+  to add a website or configure its public cache origin and optional manual CI
+  target. It also stores the DeepL, GitHub rebuild and page-cache tokens; secrets
+  are returned masked and a blank save keeps the current value.
+- **Website-CMS → `/website`** is exclusively for content. Choose a site, then
+  a page and section, and edit DE or EN. Known sections use typed forms; the JSON
+  view remains available and unknown keys are preserved.
+- The page model always exposes the known pages, sections and both languages,
+  even before a database row exists. `Vorgabe` means the public site's local
+  default is currently in use; saving creates the first override.
+- Lists use stale-while-revalidate. Previously loaded data appears immediately
+  with the `tds-stale` state while it refreshes, and a failed refresh is shown as
+  an error without discarding the last usable data. A background response never
+  overwrites unsaved editor input.
 
-- **Sites:** `GET /cms/sites`, `POST /cms/sites` (`{site_key, name}`),
-  `GET /cms/summary` (the "Websites" widget count).
-- **Blocks:** `GET /cms/{site}/blocks` (section/lang list),
-  `GET /cms/{site}/blocks/{key}?lang=de`, `PUT /cms/{site}/blocks/{key}`
-  (`{value, lang}`), `DELETE …`.
-- **Frontend:** nav "Website-CMS" → `/website`, the sites list + add-site form,
-  the sites dashboard widget, DE/EN i18n.
-- **Public read (UNAUTHENTICATED)** — the successor to tds-content-api's open
-  `GET /content/landing?lang=` the public landingpage/blog SSG builds fetch: returns
-  the default site's content blocks for a language as `{blocks: {section_key: value}}`
-  (landing sections + the blog's `cookie_banner`/`ads` config blocks). Degrades to
-  `{blocks:{}}` on a DB error (build-fetch fail-safe).
+## Cache refresh and CI rebuilds
 
-## Legal documents (PDF)
+Saving or deleting a block, backfilling translations, or changing a legal PDF
+sends a targeted `CacheEvent` to the affected public site. The public site maps
+block/document IDs to its own routes and rebuilds only the relevant page or
+partial cache entries. The API returns `cached: bool`, so the UI reports whether
+a request was actually sent instead of claiming success when configuration is
+missing.
 
-Uploadable PDFs — the **AGB** today, any `doc_key` tomorrow — one per
-**site × doc_key × language**. Unlike a content block there is no text to edit:
-the uploaded PDF *is* the document, and the public site bakes its bytes into
-`dist/` at build time. An upload fires the site's rebuild, so the flow is
-upload → rebuild → live.
+Each registered site needs a pure http(s) **origin** in `cache_url` — no
+credentials, path, query or fragment — and the shared `cache_token`. The token is
+stored under the `website-cms` settings namespace and may fall back to
+`WEBSITE_CACHE_TOKEN`. A manual `POST /cms/sites/{site}/cache/rebuild` returns
+422 without an origin and 503 without a cache token/service.
 
-- **Admin:** `GET /cms/sites/{site}/legal` (`website:read`),
-  `POST /cms/sites/{site}/legal/{key}` (`website:write`, multipart `file` +
-  `lang` + optional `version_label`), `DELETE /cms/sites/{site}/legal/{key}?lang=`,
-  `GET /cms/sites/{site}/legal/{key}/file?lang=` (preview).
-- **Public (UNAUTHENTICATED):** `GET /content/legal` → metadata map
-  `{docs: {agb: {de: {filename, sizeBytes, versionLabel, updatedAt}}}}`, and
-  `GET /content/legal/{key}.pdf?lang=de` → the bytes. Both degrade to an empty
-  map / a 404 rather than a 500.
-- **PDF only, 8 MB max**, and the check is the `%PDF-` magic number, not the
-  client-declared media type. The bytes live in the `cms_legal_doc` row
-  (`MEDIUMBLOB`) rather than on disk — see the migration for why.
-- **UI:** a *Rechtsdokumente* section in the site editor (`islands/LegalDocs.tsx`).
+GitHub `workflow_dispatch` is separate. Content saves do **not** start CI. The
+optional repository/workflow plus `rebuild_token` (or
+`WEBSITE_REBUILD_TOKEN`) are used only by the explicit manual
+`POST /cms/sites/{site}/rebuild`, intended for code or design deployments.
 
-Auth: the admin routes need `website:read`/`website:write` from the core `UserContext`
-(admins bypass); the `/content/*` public reads are ungated. Data via the core `PDO`.
+## API surface
 
-## Still to port (later checkpoints)
+- Registry: `GET/POST /cms/sites`, `GET /cms/summary`,
+  `PUT /cms/sites/{site}/rebuild-config`.
+- Blocks: `GET /cms/{site}/blocks`,
+  `GET/PUT/DELETE /cms/{site}/blocks/{key}`.
+- Translation: `POST /cms/sites/{site}/translations/backfill`.
+- Legal PDFs: `GET /cms/sites/{site}/legal`,
+  `POST/DELETE /cms/sites/{site}/legal/{key}` and
+  `GET /cms/sites/{site}/legal/{key}/file`.
+- Public, unauthenticated reads: `GET /content/landing`,
+  `GET /content/legal` and `GET /content/legal/{key}.pdf`. Database failures
+  degrade to empty content/metadata or 404 so the public site can use its local
+  defaults.
 
-The per-section structured block editor UI, a save-triggered static-site rebuild
-(workflow_dispatch, per-site repo/workflow config), section-shape validation, and
-DeepL auto-translation of blocks (as content-api's TranslationSync does).
+Admin routes require `website:read` or `website:write` through the core
+`UserContext` (admins bypass). PDFs are limited to 8 MB, validated by the
+`%PDF-` magic number and stored in `cms_legal_doc` as a `MEDIUMBLOB`. Legal text
+is never machine-translated; DE and EN are separate uploads.
 
 ## Develop
 
 ```bash
-npm install        # pulls tds-frontend-contract from GitHub Packages (needs NPM_TOKEN)
-npm run build && npm run type-check
-composer install   # resolves tds-frontend-contract from its public VCS repo
-composer test      # phpunit — route/RBAC coverage; DB-backed tests skip without TDS_TEST_DB_DSN
+npm install
+npm run test:run
+npm run lint:primitives
+npm run type-check
+npm run build
+composer install
+composer test
 ```
+
+DB-backed PHP tests skip without `TDS_TEST_DB_DSN`.
 
 ## Enable it
 
-Host `astro.config.mjs`: add the manifest to `frontendHost({ extensions: [...] })`.
-Base API: add `new WebsiteCmsModule()` to `Modules::enabled()`.
+Add the manifest to the frontend host's `frontendHost({ extensions: [...] })`
+configuration and add `new WebsiteCmsModule()` to the base API's enabled
+modules. The host must provide `SiteCache` and use the same page-cache token as
+the public sites for targeted refreshes.
