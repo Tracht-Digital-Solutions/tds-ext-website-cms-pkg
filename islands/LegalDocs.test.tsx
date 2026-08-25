@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { primeRuntimeConfig } from "@tracht-digital-solutions/tds-shared/api";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LegalDocs from "./LegalDocs";
@@ -88,6 +89,13 @@ async function pick(u: ReturnType<typeof user>, file = pdf()) {
 
 const uploadCall = () => calls.find((c) => c.method === "POST");
 
+// apiFetch consults the host-side runtime config (/tds-runtime.json) before it
+// resolves a URL, so without this the first entry in fetch.mock.calls is that
+// probe rather than the endpoint under test. The panel products never ship the
+// file — they render <meta name="tds-api-base"> instead — so "absent" is also
+// what actually happens in production.
+beforeEach(() => primeRuntimeConfig(null));
+
 describe("listing", () => {
   it("reads the site's documents from the API host, with credentials", async () => {
     await renderDocs();
@@ -136,8 +144,12 @@ describe("upload", () => {
     const call = uploadCall()!;
     expect(pathOf(call.url)).toBe("/cms/sites/landing/legal/agb");
     // A hand-set Content-Type would strip the multipart boundary and the
-    // server would find no file — the browser must set it.
-    expect(call.init?.headers).toBeUndefined();
+    // server would find no file — the browser must set it. Asserted as "no
+    // such header" rather than "headers is undefined": apiFetch passes an empty
+    // object now, which is the same thing to the browser, and the boundary is
+    // what actually matters here.
+    const headers = new Headers((call.init?.headers ?? {}) as HeadersInit);
+    expect(headers.get("content-type")).toBeNull();
     expect(call.init?.body).toBeInstanceOf(FormData);
   });
 
