@@ -300,7 +300,7 @@ Update the docs and commit them with the code. **Do not touch `version` in
 `npm version <bump>` on top of what is committed and writes `composer.json` in
 lockstep, so a hand-bump double-bumps. A `0.x` caret is minor-locked, so a
 double-bump can land outside the product's pin and silently ship nothing. Pick
-the bump on the Release button instead; keep it inside the `0.1.x` line
+the bump on the Release button instead; keep it inside the `0.2.x` line
 `tds-admin-frontend` pins.
 
 ## Mobile layout
