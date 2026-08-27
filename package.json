@@ -1,6 +1,6 @@
 {
   "name": "@tracht-digital-solutions/tds-ext-website-cms",
-  "version": "0.1.36",
+  "version": "0.2.0",
   "description": "Website-CMS extension for the TDS panel platform: structured multi-site content with targeted page-cache refreshes.",
   "license": "UNLICENSED",
   "private": false,
