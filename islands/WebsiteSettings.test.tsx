@@ -60,8 +60,6 @@ const NS = "/admin/settings/website-cms";
 const CONFIGURED = {
   settings: [
     { key: "deepl_api_key", secret: true, configured: true, last4: "cd34" },
-    { key: "rebuild_token", secret: true, configured: true, last4: "ef56" },
-    { key: "cache_token", secret: true, configured: true, last4: "gh78" },
     { key: "auto_translate", secret: false, value: "1" },
   ],
 };
@@ -109,8 +107,6 @@ describe("loading", () => {
     getResponse = { status: 200, body: CONFIGURED };
     await renderSettings();
     expect(await screen.findByText(/konfiguriert \(…cd34\)/)).toBeTruthy();
-    expect(screen.getByText(/konfiguriert \(…ef56\)/)).toBeTruthy();
-    expect(screen.getByText(/konfiguriert \(…gh78\)/)).toBeTruthy();
   });
 
   it("leaves the secret inputs empty even when a secret is configured", async () => {
@@ -131,8 +127,7 @@ describe("loading", () => {
 
   it("reports an unconfigured secret plainly", async () => {
     await renderSettings();
-    // Three secrets: DeepL, the CI rebuild token, and the page-cache token.
-    expect(await screen.findAllByText(/nicht konfiguriert/)).toHaveLength(3);
+    expect(await screen.findAllByText(/nicht konfiguriert/)).toHaveLength(1);
   });
 
   it("falls back to ???? when a configured secret has no last4", async () => {
@@ -201,7 +196,7 @@ describe("saving", () => {
     await user().click(await screen.findByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(put()).toBeDefined());
     expect(pathOf(put()!.url)).toBe(NS);
-    expect(sent().map((s) => s.key).sort()).toEqual(["auto_translate", "cache_token", "deepl_api_key", "rebuild_token"]);
+    expect(sent().map((s) => s.key).sort()).toEqual(["auto_translate", "deepl_api_key"]);
   });
 
   it("sends a blank secret when the admin did not retype one — meaning KEEP", async () => {
@@ -213,7 +208,6 @@ describe("saving", () => {
     await user().click(screen.getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(put()).toBeDefined());
     expect(valueOf("deepl_api_key")).toBe("");
-    expect(valueOf("rebuild_token")).toBe("");
   });
 
   it("marks the secrets as secret and the flag as not secret", async () => {
@@ -223,10 +217,6 @@ describe("saving", () => {
     const bySecret = Object.fromEntries(sent().map((s) => [s.key, s.secret]));
     expect(bySecret).toEqual({
       deepl_api_key: true,
-      rebuild_token: true,
-      // The page-cache token authenticates a render request against a PUBLIC
-      // host, so it is a secret like the other two.
-      cache_token: true,
       auto_translate: false,
     });
   });

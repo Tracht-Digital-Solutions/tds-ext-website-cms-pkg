@@ -7,10 +7,20 @@ interface Site {
   id: number;
   site_key: string;
   name: string;
-  rebuild_repo?: string | null;
-  rebuild_workflow?: string | null;
-  cache_url?: string | null;
   updated_at: string;
+}
+
+interface Connection {
+  origin?: string;
+  profile?: string;
+  status?: string;
+  connected_at?: string | null;
+  last_seen_at?: string | null;
+}
+
+interface BlogCandidate {
+  blog_key: string;
+  name: string;
 }
 
 const api = apiFetch;
@@ -35,7 +45,9 @@ const api = apiFetch;
  */
 export default function SiteRegistry() {
   const sitesQuery = useCachedJson<{ sites: Site[] }>("/cms/sites");
+  const blogsQuery = useCachedJson<{ blogs: BlogCandidate[] }>("/blogs");
   const sites = sitesQuery.data?.sites ?? [];
+  const blogs = blogsQuery.data?.blogs ?? [];
   const sitesVisiblyStale =
     sitesQuery.stale || (sitesQuery.error !== null && sitesQuery.data !== undefined);
 
@@ -147,7 +159,7 @@ export default function SiteRegistry() {
       ) : (
         <div className={staleClass(sitesVisiblyStale, "tds-stack")} aria-busy={sitesVisiblyStale}>
           {sites.map((site) => (
-            <SiteCard key={site.id} site={site} />
+            <SiteCard key={site.id} site={site} blogs={blogs} />
           ))}
         </div>
       )}
@@ -155,91 +167,89 @@ export default function SiteRegistry() {
   );
 }
 
-/** Rebuild target and page-cache address for one site, plus the two buttons. */
-function SiteCard({ site }: { site: Site }) {
-  const [repo, setRepo] = useState(site.rebuild_repo ?? "");
-  const [workflow, setWorkflow] = useState(site.rebuild_workflow ?? "dev.yml");
-  const [cacheUrl, setCacheUrl] = useState(site.cache_url ?? "");
-  const [dirty, setDirty] = useState(false);
-  const incomingSignature = JSON.stringify([
-    site.rebuild_repo ?? "",
-    site.rebuild_workflow ?? "dev.yml",
-    site.cache_url ?? "",
-  ]);
-  const [seededFrom, setSeededFrom] = useState(incomingSignature);
-  const [saving, setSaving] = useState(false);
+/** One-click API connection and targeted page-cache refresh for one site. */
+function SiteCard({ site, blogs }: { site: Site; blogs: BlogCandidate[] }) {
+  const [connection, setConnection] = useState<Connection | null>(null);
+  const [origin, setOrigin] = useState("");
+  const [blog, setBlog] = useState("");
+  const [candidateKeys, setCandidateKeys] = useState<string[]>(blogs.map((item) => item.blog_key));
+  const [loading, setLoading] = useState(true);
+  const [connecting, setConnecting] = useState(false);
+  const [installUrl, setInstallUrl] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
   const [cacheStatus, setCacheStatus] = useState<string | null>(null);
-  const [rebuildStatus, setRebuildStatus] = useState<string | null>(null);
 
-  // SWR can replace the site row while this card stays mounted. Refresh an
-  // untouched form, but never overwrite an operator who started typing while
-  // the stale row was on screen.
-  useEffect(() => {
-    if (incomingSignature === seededFrom) return;
-    const currentSignature = JSON.stringify([repo, workflow, cacheUrl]);
-    if (!dirty || currentSignature === incomingSignature) {
-      setRepo(site.rebuild_repo ?? "");
-      setWorkflow(site.rebuild_workflow ?? "dev.yml");
-      setCacheUrl(site.cache_url ?? "");
-      setDirty(false);
-    }
-    setSeededFrom(incomingSignature);
-  }, [cacheUrl, dirty, incomingSignature, repo, seededFrom, site, workflow]);
-
-  const saveConfig = async () => {
-    setSaving(true);
-    let res: Response;
+  const loadConnection = async () => {
     try {
-      res = await api(`/cms/sites/${site.site_key}/rebuild-config`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rebuild_repo: repo.trim(),
-          rebuild_workflow: workflow.trim(),
-          cache_url: cacheUrl.trim(),
-        }),
-      });
+      const res = await api(`/cms/sites/${site.site_key}/connection`);
+      if (res.status === 404) {
+        setConnection(null);
+      } else if (res.ok) {
+        const body = await res.json();
+        const next = (body.connection ?? body) as Connection;
+        setConnection(next);
+        setOrigin(next.origin ?? "");
+      } else {
+        setConnectionStatus(`Verbindungsstatus konnte nicht geladen werden (HTTP ${res.status}).`);
+      }
     } catch {
-      setSaving(false);
-      toast.danger("Speichern fehlgeschlagen (Netzwerkfehler).");
-      return;
-    }
-    setSaving(false);
-    if (res.ok) {
-      // Let the following SWR refresh adopt the server's canonical origin
-      // (lower-cased host, trailing slash removed). Keeping `dirty` here would
-      // make the protection against clobbering edits also reject our own save.
-      setDirty(false);
-      toast.success("Konfiguration gespeichert.");
-      invalidate("/cms/sites");
-    } else {
-      toast.danger(`Speichern fehlgeschlagen (HTTP ${res.status}).`);
+      setConnectionStatus("Verbindungsstatus konnte nicht geladen werden (Netzwerkfehler).");
+    } finally {
+      setLoading(false);
     }
   };
 
-  const rebuildRepository = async () => {
-    setRebuildStatus("Build wird ausgelöst …");
-    let res: Response;
+  useEffect(() => {
+    void loadConnection();
+  }, [site.site_key]);
+
+  useEffect(() => {
+    const keys = blogs.map((item) => item.blog_key);
+    setCandidateKeys(keys);
+    if (keys.length === 1) setBlog(keys[0]);
+  }, [blogs]);
+
+  const connect = async () => {
+    setConnecting(true);
+    setConnectionStatus(null);
+    setInstallUrl(null);
     try {
-      res = await api(`/cms/sites/${site.site_key}/rebuild`, { method: "POST" });
+      const bindings = blog.trim() === "" ? {} : { blog: blog.trim() };
+      const res = await api(`/cms/sites/${site.site_key}/connection/pairing`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ origin: origin.trim(), profile: "landingpage", bindings }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (Array.isArray(body.candidates)) setCandidateKeys(body.candidates.map(String));
+        setConnectionStatus(res.status === 422
+          ? (body.error ?? "Bitte eine reine HTTPS-Adresse und bei mehreren Blogs den passenden Blog-Schlüssel angeben.")
+          : `Verbinden fehlgeschlagen (HTTP ${res.status}).`);
+        return;
+      }
+      setInstallUrl(body.fallback_url ?? body.install_url ?? null);
+      if (body.delivered === true || body.connected === true) {
+        toast.success("Website mit der API verbunden.");
+        await loadConnection();
+      } else {
+        setConnectionStatus("Die Website war nicht direkt erreichbar. Öffnen Sie den Einrichtungslink auf dem Website-Server.");
+      }
     } catch {
-      setRebuildStatus(null);
-      toast.danger("Build fehlgeschlagen (Netzwerkfehler).");
-      return;
+      setConnectionStatus("Verbinden fehlgeschlagen (Netzwerkfehler).");
+    } finally {
+      setConnecting(false);
     }
+  };
+
+  const disconnect = async () => {
+    const res = await api(`/cms/sites/${site.site_key}/connection`, { method: "DELETE" });
     if (res.ok) {
-      setRebuildStatus(null);
-      toast.success("Build ausgelöst.");
-    } else if (res.status === 503) {
-      // In the flow, not as a toast: a missing token is a persistent
-      // configuration gap, and a vanishing message would leave the operator
-      // pressing a button that can never work.
-      setRebuildStatus("Kein Rebuild-Token hinterlegt (weiter oben in diesem Abschnitt).");
-    } else if (res.status === 422) {
-      setRebuildStatus("Für diese Website ist kein Repository hinterlegt.");
+      setConnection(null);
+      setInstallUrl(null);
+      toast.success("Verbindung getrennt.");
     } else {
-      setRebuildStatus(null);
-      toast.danger(`Build fehlgeschlagen (HTTP ${res.status}).`);
+      toast.danger(`Trennen fehlgeschlagen (HTTP ${res.status}).`);
     }
   };
 
@@ -261,9 +271,11 @@ function SiteCard({ site }: { site: Site }) {
       setCacheStatus(null);
       toast.success("Cache-Neubau für die Website wurde angestoßen.");
     } else if (res.status === 422) {
-      setCacheStatus("Für diese Website ist keine Adresse hinterlegt.");
+      setCacheStatus("Die gespeicherte Website-Adresse ist ungültig.");
     } else if (res.status === 503) {
-      setCacheStatus("Kein Seiten-Cache-Token hinterlegt (weiter oben in diesem Abschnitt).");
+      setCacheStatus("Die Website ist noch nicht vollständig mit der API verbunden.");
+    } else if (res.status === 502) {
+      setCacheStatus("Die Website ist erreichbar, aber der Cache-Neubau ist fehlgeschlagen. Bitte erneut versuchen.");
     } else {
       setCacheStatus(null);
       toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
@@ -281,55 +293,34 @@ function SiteCard({ site }: { site: Site }) {
         Adresse der öffentlichen Website
         <input
           className="field-boxed"
-          value={cacheUrl}
-          onChange={(e) => {
-            setCacheUrl(e.target.value);
-            setDirty(true);
-          }}
+          value={origin}
+          onChange={(e) => setOrigin(e.target.value)}
           placeholder="https://tracht-digital.de"
         />
       </label>
       <p className="marginalia">
-        Reine http(s)-Adresse ohne Zugangsdaten, Pfad, Query oder Fragment. Ohne sie wird gespeichert,
-        aber die öffentliche Seite zeigt weiter die alte Fassung, bis sie von selbst neu
-        rendert.
+        Die Website übernimmt API-Schlüssel und Cache-Zugang automatisch. Nur die HTTPS-Adresse
+        ohne Pfad eingeben.
       </p>
 
-      <div className="tds-row">
+      {candidateKeys.length > 0 ? (
         <label className="block text-sm">
-          Repository
-          <input
-            className="field-boxed"
-            value={repo}
-            onChange={(e) => {
-              setRepo(e.target.value);
-              setDirty(true);
-            }}
-            placeholder="Tracht-Digital-Solutions/tds-landingpage-frontend"
-          />
+          Blog-Inhalte verwenden {candidateKeys.length > 1 ? <span>(erforderlich)</span> : null}
+          <select className="field-boxed" value={blog} onChange={(e) => setBlog(e.target.value)}>
+            {candidateKeys.length > 1 ? <option value="">Blog auswählen …</option> : null}
+            {candidateKeys.map((key) => {
+              const label = blogs.find((item) => item.blog_key === key)?.name;
+              return <option key={key} value={key}>{label ? `${label} (${key})` : key}</option>;
+            })}
+          </select>
         </label>
-        <label className="block text-sm">
-          Workflow
-          <input
-            className="field-boxed"
-            value={workflow}
-            onChange={(e) => {
-              setWorkflow(e.target.value);
-              setDirty(true);
-            }}
-            placeholder="dev.yml"
-          />
-        </label>
-      </div>
-      <p className="marginalia">
-        Nur für Code- und Design-Änderungen. Der Token liegt weiter oben in diesem Abschnitt.
-      </p>
-
-      {rebuildStatus ? (
-        <p className="tds-alert" role="status">
-          {rebuildStatus}
-        </p>
       ) : null}
+
+      {loading ? <p><Spinner size="sm" /> Verbindungsstatus wird geladen …</p> : connection ? (
+        <p className="tds-alert tds-alert--success" role="status">Verbunden mit {connection.origin ?? origin}</p>
+      ) : <p className="tds-alert" role="status">Noch nicht mit der API verbunden.</p>}
+      {connectionStatus ? <p className="tds-alert tds-alert--danger" role="alert">{connectionStatus}</p> : null}
+      {installUrl ? <p><a className="btn btn-ghost" href={installUrl}>Einrichtungslink öffnen</a></p> : null}
       {cacheStatus ? (
         <p className="tds-alert" role="status">
           {cacheStatus}
@@ -337,15 +328,13 @@ function SiteCard({ site }: { site: Site }) {
       ) : null}
 
       <div className="tds-toolbar">
-        <button className="btn btn-primary" type="button" onClick={saveConfig} disabled={saving}>
-          {saving ? <Spinner size="sm" /> : "Konfiguration speichern"}
+        <button className="btn btn-primary" type="button" onClick={connect} disabled={connecting || origin.trim() === "" || (candidateKeys.length > 1 && blog === "")}>
+          {connecting ? <Spinner size="sm" /> : connection ? "Neu verbinden" : "Mit API verbinden"}
         </button>
         <button className="btn btn-accent" type="button" onClick={rebuildCache}>
           Seiten-Cache neu bauen
         </button>
-        <button className="btn btn-ghost" type="button" onClick={rebuildRepository}>
-          Jetzt neu bauen (CI)
-        </button>
+        {connection ? <button className="btn btn-ghost" type="button" onClick={disconnect}>Verbindung trennen</button> : null}
       </div>
     </section>
   );

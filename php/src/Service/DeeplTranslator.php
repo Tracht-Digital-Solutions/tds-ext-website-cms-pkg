@@ -10,7 +10,7 @@ namespace Tds\Ext\WebsiteCms\Service;
  *
  * Every failure path returns null — a flaky DeepL API, a missing key or a quota
  * hit must never fail the admin's save (same swallow-and-log philosophy as the
- * RebuildTrigger). Markdown code spans/fences are shielded so code stays
+ * cache refresh). Markdown code spans/fences are shielded so code stays
  * byte-identical through the translation.
  */
 final class DeeplTranslator

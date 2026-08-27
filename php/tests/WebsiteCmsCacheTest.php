@@ -71,9 +71,11 @@ final class WebsiteCmsCacheTest extends TestCase
         $container->set(SettingsStore::class, new CacheSettings('secret'));
         $container->set(SiteCache::class, $cache);
 
-        $sent = $this->fire($container);
+        $report = $this->fire($container);
 
-        self::assertTrue($sent);
+        self::assertSame('skipped', $report['cache_status']);
+        self::assertFalse($report['cached']);
+        self::assertSame([['reason' => 'legacy_transport_has_no_result']], $report['unknownEvents']);
         self::assertSame('https://example.com', $cache->call['url'] ?? null);
         self::assertSame('secret', $cache->call['token'] ?? null);
         self::assertInstanceOf(CacheEvent::class, $cache->call['events'][0] ?? null);
@@ -86,7 +88,9 @@ final class WebsiteCmsCacheTest extends TestCase
         $container->set(SettingsStore::class, new CacheSettings(null));
         $container->set(SiteCache::class, $cache);
 
-        self::assertFalse($this->fire($container));
+        $report = $this->fire($container);
+        self::assertSame('not_configured', $report['cache_status']);
+        self::assertFalse($report['cached']);
         self::assertNull($cache->call);
     }
 
@@ -97,7 +101,9 @@ final class WebsiteCmsCacheTest extends TestCase
         $container->set(SettingsStore::class, new CacheSettings('secret'));
         $container->set(SiteCache::class, $cache);
 
-        self::assertFalse($this->fire($container, 'https://attacker:password@example.com/path?token=steal'));
+        $report = $this->fire($container, 'https://attacker:password@example.com/path?token=steal');
+        self::assertSame('not_configured', $report['cache_status']);
+        self::assertFalse($report['cached']);
         self::assertNull($cache->call);
     }
 
@@ -108,7 +114,10 @@ final class WebsiteCmsCacheTest extends TestCase
         $container->set(SettingsStore::class, new ThrowingCacheSettings());
         $container->set(SiteCache::class, $cache);
 
-        self::assertFalse($this->fire($container));
+        $report = $this->fire($container);
+        self::assertSame('failed', $report['cache_status']);
+        self::assertFalse($report['cached']);
+        self::assertSame([['reason' => 'transport_error']], $report['failed']);
         self::assertNull($cache->call);
     }
 
@@ -119,14 +128,17 @@ final class WebsiteCmsCacheTest extends TestCase
         self::assertMatchesRegularExpression('/function findSite\(.*?SELECT[^;]+cache_url/s', $source);
     }
 
-    private function fire(Container $container, string $url = 'https://example.com'): bool
+    /** @return array{cache_status:string,cached:bool,rebuilt:array,skipped:array,failed:array,unknownEvents:array} */
+    private function fire(Container $container, string $url = 'https://example.com'): array
     {
         $method = new ReflectionMethod(WebsiteCmsModule::class, 'fireCache');
-        return (bool) $method->invoke(
+        /** @var array{cache_status:string,cached:bool,rebuilt:array,skipped:array,failed:array,unknownEvents:array} $report */
+        $report = $method->invoke(
             null,
             $container,
-            ['cache_url' => $url],
+            ['site_key' => 'landing', 'cache_url' => $url],
             [new CacheEvent('block', 'hero', 'de')],
         );
+        return $report;
     }
 }

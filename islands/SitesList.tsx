@@ -17,8 +17,6 @@ interface Site {
   id: number;
   site_key: string;
   name: string;
-  rebuild_repo?: string | null;
-  rebuild_workflow?: string | null;
   /**
    * Origin of the public site whose page cache a save rebuilds.
    *
@@ -48,8 +46,8 @@ const api = apiFetch;
  * Adding a website, and configuring where its rebuild and its page cache point,
  * moved to **Einstellungen → Website-CMS** (`SiteRegistry.tsx`). Those are
  * things you do once when a site is connected; they were sitting on the daily
- * editing screen, above the content, where a repository name and a GitHub
- * workflow file are noise at best and an invitation to break a working site at
+ * editing screen, above the content, where connection fields are noise at best
+ * and an invitation to break a working site at
  * worst. This screen now answers exactly one question: which words go on which
  * page.
  *

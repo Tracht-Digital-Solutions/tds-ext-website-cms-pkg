@@ -7,7 +7,7 @@
   "require": {
     "php": ">=8.1",
     "slim/slim": "^4.13",
-    "tracht-digital-solutions/tds-frontend-contract": "^1.10.0"
+    "tracht-digital-solutions/tds-frontend-contract": "^1.11.0"
   },
   "require-dev": {
     "php-di/php-di": "^7.0",

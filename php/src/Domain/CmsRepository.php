@@ -23,7 +23,7 @@ final class CmsRepository
     public function sites(): array
     {
         return $this->pdo->query(
-            'SELECT id, site_key, name, rebuild_repo, rebuild_workflow, cache_url, updated_at
+            'SELECT id, site_key, name, cache_url, updated_at
              FROM cms_site ORDER BY name, id'
         )->fetchAll();
     }
@@ -37,28 +37,20 @@ final class CmsRepository
     public function findSite(string $siteKey): ?array
     {
         $stmt = $this->pdo->prepare(
-            'SELECT id, site_key, name, rebuild_repo, rebuild_workflow, cache_url FROM cms_site WHERE site_key = :k LIMIT 1'
+            'SELECT id, site_key, name, cache_url FROM cms_site WHERE site_key = :k LIMIT 1'
         );
         $stmt->execute([':k' => $siteKey]);
         $row = $stmt->fetch();
         return $row === false ? null : $row;
     }
 
-    /**
-     * The site's deploy hook and its page-cache origin.
-     *
-     * Two different jobs kept in one call because they are configured on one
-     * form: `repo`/`workflow` dispatch a CI build and ship code, `cacheUrl` is
-     * the origin a content save asks to re-render a page. Collapsing them into
-     * one setting would mean every typo correction went through a full build
-     * again — which is the thing the page cache exists to end.
-     */
-    public function updateSiteRebuild(int $siteId, ?string $repo, ?string $workflow, ?string $cacheUrl = null): void
+    /** @return array<string,mixed>|null */
+    public function findSiteById(int $siteId): ?array
     {
-        $stmt = $this->pdo->prepare(
-            'UPDATE cms_site SET rebuild_repo = :r, rebuild_workflow = :w, cache_url = :c WHERE id = :id'
-        );
-        $stmt->execute([':r' => $repo, ':w' => $workflow, ':c' => $cacheUrl, ':id' => $siteId]);
+        $stmt = $this->pdo->prepare('SELECT id, site_key, name, cache_url FROM cms_site WHERE id = :id LIMIT 1');
+        $stmt->execute([':id' => $siteId]);
+        $row = $stmt->fetch();
+        return $row === false ? null : $row;
     }
 
     public function siteKeyExists(string $siteKey): bool

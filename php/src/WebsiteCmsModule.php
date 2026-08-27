@@ -10,7 +10,6 @@ use Psr\Http\Message\UploadedFileInterface;
 use Slim\App;
 use Tds\Ext\WebsiteCms\Domain\CmsRepository;
 use Tds\Ext\WebsiteCms\Service\DeeplTranslator;
-use Tds\Ext\WebsiteCms\Service\RebuildTrigger;
 use Tds\Ext\WebsiteCms\Service\TranslatableJsonWalker;
 use Tds\Ext\WebsiteCms\Service\TranslationSync;
 use Tds\Ext\WebsiteCms\Support\CacheOrigin;
@@ -19,9 +18,14 @@ use Psr\Container\ContainerInterface;
 use Tds\Frontend\Contract\AbstractModule;
 use Tds\Frontend\Contract\ApiDocSource;
 use Tds\Frontend\Contract\CacheEvent;
+use Tds\Frontend\Contract\ConnectedSiteCache;
 use Tds\Frontend\Contract\PermissionDef;
+use Tds\Frontend\Contract\ReportingSiteCache;
 use Tds\Frontend\Contract\SettingsStore;
 use Tds\Frontend\Contract\SiteCache;
+use Tds\Frontend\Contract\SiteConnectionException;
+use Tds\Frontend\Contract\SiteConnectionIdentity;
+use Tds\Frontend\Contract\SiteConnections;
 use Tds\Frontend\Contract\SiteKeyProtected;
 use Tds\Frontend\Contract\UserContext;
 
@@ -70,15 +74,6 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
         // else defines them, so binding unconditionally is the correct shape.
         $c?->set(CmsRepository::class, static fn ($c) => new CmsRepository($c->get(PDO::class)));
         if ($c !== null) {
-            $c->set(RebuildTrigger::class, static function ($c): RebuildTrigger {
-                // DB-first (settings store), env fallback for the rebuild PAT.
-                $token = self::setting($c)?->getSecret('website-cms', 'rebuild_token');
-                if ($token === null || $token === '') {
-                    $token = (string) (getenv('WEBSITE_REBUILD_TOKEN') ?: '');
-                }
-                $ref = (string) (getenv('WEBSITE_REBUILD_REF') ?: 'main');
-                return new RebuildTrigger($token, $ref !== '' ? $ref : 'main');
-            });
             $c->set(TranslationSync::class, static function ($c): TranslationSync {
                 $store = self::setting($c);
                 // DeepL key: settings store → WEBSITE_DEEPL_API_KEY → DEEPL_API_KEY.
@@ -107,7 +102,7 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             // the public site uses its in-code defaults, never a 500.
             try {
                 $repo = $c->get(CmsRepository::class);
-                $site = $repo->defaultSite();
+                $site = self::requestSite($c, $repo);
                 $lang = self::lang($req->getQueryParams()['lang'] ?? null);
                 $blocks = $site === null ? [] : $repo->publicBlocks((int) $site['id'], $lang);
                 return self::json($res, ['blocks' => (object) $blocks]);
@@ -123,7 +118,7 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
         $app->get('/content/legal', function (Request $req, Response $res) use ($c): Response {
             try {
                 $repo = $c->get(CmsRepository::class);
-                $site = $repo->defaultSite();
+                $site = self::requestSite($c, $repo);
                 $docs = [];
                 foreach ($site === null ? [] : $repo->legalDocs((int) $site['id']) as $row) {
                     $docs[(string) $row['doc_key']][(string) $row['lang']] = self::legalMeta($row);
@@ -144,7 +139,7 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
         $app->get('/content/legal/{key:[a-z0-9-]+}.pdf', function (Request $req, Response $res, array $args) use ($c): Response {
             try {
                 $repo = $c->get(CmsRepository::class);
-                $site = $repo->defaultSite();
+                $site = self::requestSite($c, $repo);
                 $lang = self::lang($req->getQueryParams()['lang'] ?? null);
                 $doc = $site === null ? null : $repo->legalDocWithContent((int) $site['id'], (string) $args['key'], $lang);
                 if ($doc === null) {
@@ -213,8 +208,8 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
                 $bytes,
                 $label !== '' ? substr($label, 0, 128) : null,
             );
-            $cached = self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
-            return self::json($res, ['ok' => true, 'cached' => $cached], 201);
+            $cache = self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
+            return self::json($res, array_merge(['ok' => true], $cache), 201);
         });
 
         $app->delete('/cms/sites/{site:[a-z0-9-]+}/legal/{key:[a-z0-9-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -231,8 +226,8 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             if (!$repo->deleteLegalDoc((int) $site['id'], $key, $lang)) {
                 return self::json($res, ['error' => 'Not found'], 404);
             }
-            $cached = self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
-            return self::json($res, ['ok' => true, 'cached' => $cached]);
+            $cache = self::fireCache($c, $site, [new CacheEvent('legal', $key, $lang)]);
+            return self::json($res, array_merge(['ok' => true], $cache));
         });
 
         // Admin preview of the stored bytes (the public route only ever serves
@@ -285,6 +280,94 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             return self::json($res, ['id' => $repo->createSite($key, $name)], 201);
         });
 
+        $app->get('/cms/sites/{site:[a-z0-9-]+}/connection', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:read', $res)) !== null) {
+                return $deny;
+            }
+            if ($c->get(CmsRepository::class)->findSite((string) $args['site']) === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $connections = self::connections($c);
+            if ($connections === null) {
+                return self::json($res, ['error' => 'Site connection service is not available'], 503);
+            }
+            $connection = $connections->get('website', (string) $args['site']);
+            return $connection === null
+                ? self::json($res, ['error' => 'Connection not found'], 404)
+                : self::json($res, ['connection' => $connection->toArray()]);
+        });
+
+        $app->delete('/cms/sites/{site:[a-z0-9-]+}/connection', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
+                return $deny;
+            }
+            if ($c->get(CmsRepository::class)->findSite((string) $args['site']) === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $connections = self::connections($c);
+            if ($connections === null) {
+                return self::json($res, ['error' => 'Site connection service is not available'], 503);
+            }
+            return self::json($res, ['ok' => true, 'deleted' => $connections->delete('website', (string) $args['site'])]);
+        });
+
+        $app->post('/cms/sites/{site:[a-z0-9-]+}/connection/pairing', function (Request $req, Response $res, array $args) use ($c): Response {
+            if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
+                return $deny;
+            }
+            if ($c->get(CmsRepository::class)->findSite((string) $args['site']) === null) {
+                return self::json($res, ['error' => 'Site not found'], 404);
+            }
+            $connections = self::connections($c);
+            if ($connections === null) {
+                return self::json($res, ['error' => 'Site connection service is not available'], 503);
+            }
+            $body = (array) $req->getParsedBody();
+            $origin = trim((string) ($body['origin'] ?? ''));
+            $provided = is_array($body['bindings'] ?? null) ? $body['bindings'] : [];
+            $bindings = ['website' => (string) $args['site']];
+            $candidates = self::bindingKeys($c, 'blog', 'blog_key');
+            $blog = trim((string) ($provided['blog'] ?? ''));
+            if ($blog !== '') {
+                if (!in_array($blog, $candidates, true)) {
+                    return self::json($res, [
+                        'error' => 'Der gewählte Blog-Schlüssel existiert nicht.',
+                        'candidates' => $candidates,
+                    ], 422);
+                }
+                $bindings['blog'] = $blog;
+            } else {
+                if (count($candidates) === 1) {
+                    $bindings['blog'] = $candidates[0];
+                } elseif (count($candidates) > 1) {
+                    return self::json($res, [
+                        'error' => 'Bei mehreren Blogs muss der Blog-Schlüssel gewählt werden.',
+                        'candidates' => $candidates,
+                    ], 422);
+                }
+            }
+            $scopes = ['/content/landing', '/content/legal'];
+            if (isset($bindings['blog'])) {
+                $scopes = array_merge($scopes, ['/content/blog', '/content/topics', '/content/snippets']);
+            }
+            try {
+                $pairing = $connections->createPairing(
+                    'website',
+                    (string) $args['site'],
+                    $origin,
+                    'landingpage',
+                    $bindings,
+                    $scopes,
+                );
+                return self::json($res, $connections->deliverPairing($pairing, self::apiBase($req))->toArray(), 201);
+            } catch (SiteConnectionException $e) {
+                return self::json($res, ['error' => $e->getMessage(), 'code' => $e->errorCode], $e->httpStatus);
+            } catch (\Throwable $e) {
+                error_log('[website-cms] pairing failed: ' . $e->getMessage());
+                return self::json($res, ['error' => 'Pairing could not be created'], 503);
+            }
+        });
+
         $app->get('/cms/{site:[a-z0-9-]+}/blocks', function (Request $req, Response $res, array $args) use ($c): Response {
             if (($deny = self::require($c->get(UserContext::class), 'website:read', $res)) !== null) {
                 return $deny;
@@ -331,74 +414,15 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             // Both languages when the counterpart was machine-translated in the
             // same call: the English page changed too, and rebuilding only the
             // saved language leaves it showing the previous translation.
-            $cached = self::fireCache($c, $site, $translated
+            $cache = self::fireCache($c, $site, $translated
                 ? [new CacheEvent('block', (string) $args['key'])]
                 : [new CacheEvent('block', (string) $args['key'], $lang)]);
-            // `cached` reports whether the affected PAGES were actually asked
-            // to re-render — which is what the editor needs to say after a
-            // save, and the one thing it cannot work out for itself.
-            return self::json($res, ['ok' => true, 'translated' => $translated, 'cached' => $cached]);
-        });
-
-        // Set a site's manual CI target and page-cache origin; blank clears it.
-        $app->put('/cms/sites/{site:[a-z0-9-]+}/rebuild-config', function (Request $req, Response $res, array $args) use ($c): Response {
-            if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
-                return $deny;
-            }
-            $repo = $c->get(CmsRepository::class);
-            $site = $repo->findSite((string) $args['site']);
-            if ($site === null) {
-                return self::json($res, ['error' => 'Site not found'], 404);
-            }
-            $body = (array) $req->getParsedBody();
-            $repoName = trim((string) ($body['rebuild_repo'] ?? ''));
-            $workflow = trim((string) ($body['rebuild_workflow'] ?? ''));
-            if ($repoName !== '' && preg_match('#^[\w.-]+/[\w.-]+$#', $repoName) !== 1) {
-                return self::json($res, ['error' => 'rebuild_repo must be "owner/name"'], 422);
-            }
-            // The page-cache token is sent to this address. Accept a pure origin
-            // only: userinfo could disclose the token, while path/query/fragment
-            // would silently target something other than the cache endpoint.
-            $rawCacheUrl = trim((string) ($body['cache_url'] ?? ''));
-            $cacheUrl = $rawCacheUrl === '' ? null : CacheOrigin::normalize($rawCacheUrl);
-            if ($rawCacheUrl !== '' && $cacheUrl === null) {
-                return self::json($res, ['error' => 'cache_url must be an http(s) origin without credentials, path, query or fragment'], 422);
-            }
-            $repo->updateSiteRebuild(
-                (int) $site['id'],
-                $repoName !== '' ? $repoName : null,
-                $workflow !== '' ? $workflow : null,
-                $cacheUrl,
-            );
-            return self::json($res, ['ok' => true]);
-        });
-
-        // Manually fire a site's rebuild ("Jetzt neu bauen").
-        $app->post('/cms/sites/{site:[a-z0-9-]+}/rebuild', function (Request $req, Response $res, array $args) use ($c): Response {
-            if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
-                return $deny;
-            }
-            $repo = $c->get(CmsRepository::class);
-            $site = $repo->findSite((string) $args['site']);
-            if ($site === null) {
-                return self::json($res, ['error' => 'Site not found'], 404);
-            }
-            $trigger = $c->get(RebuildTrigger::class);
-            if (!$trigger->isConfigured()) {
-                return self::json($res, ['error' => 'Rebuild token not configured'], 503);
-            }
-            if (trim((string) ($site['rebuild_repo'] ?? '')) === '') {
-                return self::json($res, ['error' => 'No rebuild repo configured for this site'], 422);
-            }
-            self::fireRebuild($trigger, $site, 'manual rebuild');
-            return self::json($res, ['ok' => true], 202);
+            return self::json($res, array_merge(['ok' => true, 'translated' => $translated], $cache));
         });
 
         // Rebuild a site's PAGE CACHE ("Seiten-Cache neu bauen").
         //
-        // Not the same button as /rebuild above: that dispatches a CI build and
-        // ships code, this re-renders pages from content that is already saved.
-        // An editor wants this one; it takes seconds.
+        // Re-renders pages from content that is already saved; it never deploys.
         $app->post('/cms/sites/{site:[a-z0-9-]+}/cache/rebuild', function (Request $req, Response $res, array $args) use ($c): Response {
             if (($deny = self::require($c->get(UserContext::class), 'website:write', $res)) !== null) {
                 return $deny;
@@ -408,20 +432,19 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             if ($site === null) {
                 return self::json($res, ['error' => 'Site not found'], 404);
             }
-            if (CacheOrigin::normalize((string) ($site['cache_url'] ?? '')) === null) {
-                // Said in the flow rather than reported as a cheerful success:
-                // a rebuild nobody sent looks exactly like one that worked.
-                return self::json($res, ['error' => 'No valid cache origin configured for this site'], 422);
+            if (self::connection($c, 'website', (string) $args['site']) === null) {
+                $legacyOrigin = trim((string) ($site['cache_url'] ?? ''));
+                if ($legacyOrigin === '') {
+                    return self::json($res, ['error' => 'This site is not connected'], 503);
+                }
+                if (CacheOrigin::normalize($legacyOrigin) === null) {
+                    return self::json($res, ['error' => 'The configured legacy cache origin is invalid'], 422);
+                }
             }
             $body = (array) $req->getParsedBody();
             $all = !empty($body['all']);
-            if (!self::fireCache($c, $site, $all ? [] : [new CacheEvent('block')], $all)) {
-                // The URL has its own 422 above. Reaching this branch means the
-                // shared token (or an older base without SiteCache) is missing,
-                // which is a persistent operator action rather than success.
-                return self::json($res, ['error' => 'Cache token or cache service not configured'], 503);
-            }
-            return self::json($res, ['ok' => true, 'cached' => true], 202);
+            $cache = self::fireCache($c, $site, $all ? [] : [new CacheEvent('block')], $all);
+            return self::json($res, array_merge(['ok' => $cache['cached']], $cache), self::manualCacheStatus($cache));
         });
 
         $app->delete('/cms/{site:[a-z0-9-]+}/blocks/{key:[a-z0-9_-]+}', function (Request $req, Response $res, array $args) use ($c): Response {
@@ -437,8 +460,8 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
             $repo->deleteBlock((int) $site['id'], (string) $args['key'], $lang);
             // A machine-translated counterpart was derived from this block — drop it too.
             $c->get(TranslationSync::class)->afterDelete((int) $site['id'], (string) $args['key'], $lang);
-            $cached = self::fireCache($c, $site, [new CacheEvent('block', (string) $args['key'])]);
-            return self::json($res, ['ok' => true, 'cached' => $cached]);
+            $cache = self::fireCache($c, $site, [new CacheEvent('block', (string) $args['key'])]);
+            return self::json($res, array_merge(['ok' => true], $cache));
         });
 
         // Catch up translations for a site's existing blocks (button in tds-admin).
@@ -467,10 +490,10 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
                 $wrote = $sync->afterSave((int) $site['id'], (string) $meta['section_key'], (string) $meta['lang'], $value);
                 $wrote ? $created++ : $skipped++;
             }
-            $cached = $created > 0
+            $cache = $created > 0
                 ? self::fireCache($c, $site, [new CacheEvent('block')])
-                : false;
-            return self::json($res, ['created' => $created, 'skipped' => $skipped, 'cached' => $cached]);
+                : self::emptyCacheReport('skipped');
+            return self::json($res, array_merge(['created' => $created, 'translation_skipped' => $skipped], $cache));
         });
     }
 
@@ -496,24 +519,11 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
      *
      * @param array<string,mixed> $site
      * @param CacheEvent[] $events
+     * @return array{cache_status:string,cached:bool,rebuilt:array,skipped:array,failed:array,unknownEvents:array}
      */
-    private static function fireCache(ContainerInterface $c, array $site, array $events, bool $all = false): bool
+    private static function fireCache(ContainerInterface $c, array $site, array $events, bool $all = false): array
     {
         try {
-            if (!$c->has(SiteCache::class)) {
-                return false;
-            }
-            // Validate again at the secret-bearing send boundary. This also protects
-            // rows written before strict validation existed (or by manual SQL).
-            $url = CacheOrigin::normalize((string) ($site['cache_url'] ?? ''));
-            if ($url === null) {
-                return false;
-            }
-            $token = self::setting($c)?->getSecret('website-cms', 'cache_token');
-            if ($token === null || $token === '') {
-                $token = (string) (getenv('WEBSITE_CACHE_TOKEN') ?: '');
-            }
-
             // "Everything" is expressed as one event per type with no id, which the
             // site expands into its own entry points. The alternative — sending a
             // path list — would put this module's idea of another repo's URLs into
@@ -522,30 +532,164 @@ final class WebsiteCmsModule extends AbstractModule implements ApiDocSource, Sit
                 ? [new CacheEvent('block'), new CacheEvent('legal')]
                 : $events;
 
+            if ($payload === []) {
+                return self::emptyCacheReport('skipped');
+            }
+            $connection = self::connection($c, 'website', (string) $site['site_key']);
+            if ($connection !== null && $c->has(ConnectedSiteCache::class)) {
+                $cache = $c->get(ConnectedSiteCache::class);
+                $reports = [];
+                foreach ($payload as $event) {
+                    $reports[] = $cache->refresh('website', (string) $site['site_key'], $event)->toArray();
+                }
+                return self::mergeCacheReports($reports);
+            }
+            if ($connection !== null) {
+                return self::emptyCacheReport('not_configured');
+            }
+            if (!$c->has(SiteCache::class)) {
+                return self::emptyCacheReport('not_configured');
+            }
+            $url = CacheOrigin::normalize((string) ($site['cache_url'] ?? ''));
+            if ($url === null) {
+                return self::emptyCacheReport('not_configured');
+            }
+            $token = self::setting($c)?->getSecret('website-cms', 'cache_token');
+            if ($token === null || $token === '') {
+                $token = (string) (getenv('WEBSITE_CACHE_TOKEN') ?: '');
+            }
+
             $cache = $c->get(SiteCache::class);
             // Ask before sending: `rebuild()` is a documented no-op without a
             // token, and a no-op reported as a rebuild is the same lie as above.
             if (!$cache->isConfigured($url, $token)) {
-                return false;
+                return self::emptyCacheReport('not_configured');
+            }
+            if ($cache instanceof ReportingSiteCache) {
+                return $cache->rebuildWithResult($url, $token, $payload)->toArray();
             }
             $cache->rebuild($url, $token, $payload);
-
-            return true;
+            $report = self::emptyCacheReport('skipped');
+            $report['unknownEvents'][] = ['reason' => 'legacy_transport_has_no_result'];
+            return $report;
         } catch (\Throwable $e) {
             // Cache refresh is best-effort and must never turn an already-saved
             // content mutation into a 500. Never include the token in this log.
             error_log('[website-cms] page-cache request failed: ' . $e->getMessage());
-            return false;
+            $report = self::emptyCacheReport('failed');
+            $report['failed'][] = ['reason' => 'transport_error'];
+            return $report;
         }
     }
 
-    private static function fireRebuild(RebuildTrigger $trigger, array $site, string $reason): void
+    private static function connections(ContainerInterface $c): ?SiteConnections
     {
-        $trigger->trigger(
-            isset($site['rebuild_repo']) ? (string) $site['rebuild_repo'] : null,
-            isset($site['rebuild_workflow']) ? (string) $site['rebuild_workflow'] : null,
-            $reason,
-        );
+        try {
+            return $c->has(SiteConnections::class) ? $c->get(SiteConnections::class) : null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private static function connection(ContainerInterface $c, string $type, string $id): mixed
+    {
+        try {
+            return self::connections($c)?->get($type, $id);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** A keyed request must resolve its explicit site; only a keyless request may use the legacy default. */
+    private static function requestSite(ContainerInterface $c, CmsRepository $repo): ?array
+    {
+        try {
+            if (!$c->has(SiteConnectionIdentity::class)) {
+                return $repo->defaultSite();
+            }
+            $identity = $c->get(SiteConnectionIdentity::class);
+            if (!$identity->isConnected()) {
+                return $repo->defaultSite();
+            }
+            $key = $identity->resourceType === 'website'
+                ? $identity->resourceId
+                : $identity->binding('website');
+            if (!is_string($key) || trim($key) === '') {
+                return null;
+            }
+            return ctype_digit($key) ? $repo->findSiteById((int) $key) : $repo->findSite($key);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /** @return list<string> */
+    private static function bindingKeys(ContainerInterface $c, string $table, string $column): array
+    {
+        try {
+            $rows = $c->get(PDO::class)->query("SELECT {$column} FROM {$table} ORDER BY {$column}")->fetchAll(PDO::FETCH_COLUMN);
+            return array_values(array_filter(array_map('strval', $rows), static fn (string $v): bool => $v !== ''));
+        } catch (\Throwable) {
+            return [];
+        }
+    }
+
+    private static function apiBase(Request $req): string
+    {
+        $uri = $req->getUri();
+        return $uri->getScheme() . '://' . $uri->getAuthority();
+    }
+
+    /** @return array{cache_status:string,cached:bool,rebuilt:array,skipped:array,failed:array,unknownEvents:array} */
+    private static function emptyCacheReport(string $status): array
+    {
+        return [
+            'cache_status' => $status,
+            'cached' => false,
+            'rebuilt' => [],
+            'skipped' => [],
+            'failed' => [],
+            'unknownEvents' => [],
+        ];
+    }
+
+    /** @param list<array<string,mixed>> $reports */
+    private static function mergeCacheReports(array $reports): array
+    {
+        if ($reports === []) {
+            return self::emptyCacheReport('skipped');
+        }
+        $merged = self::emptyCacheReport('refreshed');
+        $merged['cached'] = true;
+        $statuses = [];
+        foreach ($reports as $report) {
+            $statuses[] = (string) ($report['cache_status'] ?? 'failed');
+            $merged['cached'] = $merged['cached'] && (bool) ($report['cached'] ?? false);
+            foreach (['rebuilt', 'skipped', 'failed', 'unknownEvents'] as $key) {
+                $values = $report[$key] ?? [];
+                if (is_array($values)) {
+                    $merged[$key] = array_merge($merged[$key], $values);
+                }
+            }
+        }
+        if (in_array('failed', $statuses, true)) {
+            $merged['cache_status'] = 'failed';
+        } elseif (in_array('not_configured', $statuses, true)) {
+            $merged['cache_status'] = count(array_unique($statuses)) === 1 ? 'not_configured' : 'failed';
+        } elseif (!$merged['cached'] || in_array('skipped', $statuses, true)) {
+            $merged['cache_status'] = 'skipped';
+        }
+        return $merged;
+    }
+
+    /** @param array{cache_status:string,cached:bool} $report */
+    private static function manualCacheStatus(array $report): int
+    {
+        return match ($report['cache_status']) {
+            'refreshed' => 202,
+            'not_configured' => 503,
+            default => 502,
+        };
     }
 
     private static function require(UserContext $user, string $permission, Response $res): ?Response
