@@ -19,3 +19,7 @@ Desktop.ini
 # Editor backups
 *.swp
 *~
+
+# Active local Claude worktrees and local permission state live here but are
+# not part of this checkout.
+.claude/

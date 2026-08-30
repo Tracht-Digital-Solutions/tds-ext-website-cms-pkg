@@ -45,10 +45,156 @@ export type ObjectListField = {
 };
 export type Field = LeafField | StringListField | ObjectListField;
 
+/**
+ * Stable content-block keys for the six landing-page services.
+ *
+ * The public site owns service IDs, slugs and route lookup. Keeping those
+ * values out of the editable schema means an editorial change can never break
+ * a public URL; only visitor-facing copy belongs in these blocks.
+ */
+export const SERVICE_SECTION_KEYS = [
+  "service_consulting",
+  "service_process",
+  "service_solutions",
+  "service_custom_development",
+  "service_web_presence",
+  "service_complete_it",
+] as const;
+
+export type ServiceSectionKey = (typeof SERVICE_SECTION_KEYS)[number];
+
+/** Every service page has the same deliberately shallow editing contract. */
+function serviceDetailSchema(): Field[] {
+  return [
+    { key: "label", label: "Label", type: "text" },
+    { key: "title", label: "Leistungsname", type: "text" },
+    { key: "summary", label: "Kurzbeschreibung", type: "textarea" },
+    { key: "intro", label: "Einleitung", type: "textarea" },
+    { key: "situationsTitle", label: "Ausgangslagen – Überschrift", type: "text" },
+    {
+      key: "situations",
+      label: "Typische Ausgangslagen",
+      type: "stringlist",
+      itemLabel: "Ausgangslage",
+    },
+    { key: "responsibilitiesTitle", label: "Leistungsumfang – Überschrift", type: "text" },
+    {
+      key: "responsibilities",
+      label: "Was übernommen wird",
+      type: "stringlist",
+      itemLabel: "Aufgabe",
+    },
+    { key: "outcomesTitle", label: "Ergebnisse – Überschrift", type: "text" },
+    {
+      key: "outcomes",
+      label: "Erwartbare Ergebnisse",
+      type: "stringlist",
+      itemLabel: "Ergebnis",
+    },
+    { key: "boundariesTitle", label: "Abgrenzung – Überschrift", type: "text" },
+    {
+      key: "boundaries",
+      label: "Abgrenzungen und Grenzen",
+      type: "stringlist",
+      itemLabel: "Abgrenzung",
+    },
+    { key: "processTitle", label: "Vorgehen – Überschrift", type: "text" },
+    {
+      key: "process",
+      label: "Vorgehen",
+      type: "stringlist",
+      itemLabel: "Schritt",
+    },
+    { key: "priceLabel", label: "Preis-Label", type: "text" },
+    { key: "priceText", label: "Preiserklärung", type: "textarea" },
+    { key: "referencesLabel", label: "Referenzen – Label", type: "text" },
+    { key: "referencesHeadline", label: "Referenzen – Überschrift", type: "text" },
+    {
+      key: "references",
+      label: "Anonymisierte Referenzen",
+      type: "list",
+      itemLabel: "Referenz",
+      itemFields: [
+        { key: "title", label: "Neutraler Titel", type: "text" },
+        { key: "context", label: "Branche oder Unternehmenskontext", type: "textarea" },
+        { key: "challenge", label: "Ausgangslage", type: "textarea" },
+        { key: "solution", label: "Lösungsweg", type: "textarea" },
+        { key: "result", label: "Ergebnis", type: "textarea" },
+        { key: "metric", label: "Belegbare Kennzahl (optional)", type: "text" },
+      ],
+    },
+    { key: "ctaTitle", label: "CTA – Überschrift", type: "text" },
+    { key: "ctaText", label: "CTA – Text", type: "textarea" },
+    { key: "ctaButton", label: "CTA – Button", type: "text" },
+  ];
+}
+
+/** FAQ v2 changes its content namespace, not the editor contract. */
+function faqSchema(): Field[] {
+  return [
+    { key: "label", label: "Label", type: "text" },
+    { key: "headline", label: "Überschrift", type: "text" },
+    {
+      key: "items",
+      label: "Fragen",
+      type: "list",
+      itemLabel: "Frage",
+      itemFields: [
+        { key: "q", label: "Frage", type: "text" },
+        { key: "a", label: "Antwort", type: "textarea" },
+      ],
+    },
+  ];
+}
+
 // Shapes match the tds-landingpage section defaults (the primary consumer). A
 // structured form only renders the fields listed here; any other keys in the
 // block survive untouched (the form spreads them), so a partial schema is safe.
 export const SECTION_SCHEMAS: Record<string, Field[]> = {
+  home_hero: [
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "headlineSuffix", label: "Überschrift (Suffix)", type: "text" },
+    { key: "sub", label: "Untertext", type: "textarea" },
+    { key: "cta1", label: "Button 1", type: "text" },
+    { key: "cta2", label: "Button 2", type: "text" },
+    { key: "scrollHint", label: "Scroll-Hinweis", type: "text" },
+  ],
+  why_me: [
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "lead", label: "Lead", type: "textarea" },
+    { key: "p1", label: "Absatz 1", type: "textarea" },
+    { key: "p2", label: "Absatz 2", type: "textarea" },
+    {
+      key: "reasons",
+      label: "Gründe",
+      type: "list",
+      itemLabel: "Grund",
+      itemFields: [
+        { key: "title", label: "Titel", type: "text" },
+        { key: "description", label: "Beschreibung", type: "textarea" },
+      ],
+    },
+  ],
+  services_overview: [
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "intro", label: "Einleitung", type: "textarea" },
+  ],
+  digital_responsibility: [
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "body", label: "Text", type: "textarea" },
+    {
+      key: "points",
+      label: "Verantwortungsbereiche",
+      type: "stringlist",
+      itemLabel: "Punkt",
+    },
+    { key: "primaryCta", label: "Button (primär)", type: "text" },
+    { key: "secondaryCta", label: "Button (sekundär)", type: "text" },
+  ],
   hero: [
     { key: "headline", label: "Überschrift", type: "text" },
     { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
@@ -89,20 +235,14 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
       ],
     },
   ],
-  faq: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    {
-      key: "items",
-      label: "Fragen",
-      type: "list",
-      itemLabel: "Frage",
-      itemFields: [
-        { key: "q", label: "Frage", type: "text" },
-        { key: "a", label: "Antwort", type: "textarea" },
-      ],
-    },
-  ],
+  service_consulting: serviceDetailSchema(),
+  service_process: serviceDetailSchema(),
+  service_solutions: serviceDetailSchema(),
+  service_custom_development: serviceDetailSchema(),
+  service_web_presence: serviceDetailSchema(),
+  service_complete_it: serviceDetailSchema(),
+  faq: faqSchema(),
+  faq_v2: faqSchema(),
   contact: [
     { key: "label", label: "Label", type: "text" },
     { key: "headline", label: "Überschrift", type: "text" },
@@ -140,12 +280,6 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "primaryCta", label: "Button (primär)", type: "text" },
     { key: "secondaryCta", label: "Button (sekundär)", type: "text" },
   ],
-  tech: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "body", label: "Text", type: "textarea" },
-  ],
   journal: [
     {
       key: "slugs",
@@ -156,27 +290,6 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
   ],
   cookie_banner: [
     { key: "enabled", label: "Cookie-Hinweis anzeigen", type: "checkbox" },
-  ],
-  portfolio: [
-    { key: "label", label: "Label", type: "text" },
-    { key: "headline", label: "Überschrift", type: "text" },
-    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
-    { key: "comingSoon", label: "Demnächst-Label", type: "text" },
-    { key: "placeholderLabel", label: "Platzhalter-Label", type: "text" },
-    {
-      key: "items",
-      label: "Projekte",
-      type: "list",
-      itemLabel: "Projekt",
-      itemFields: [
-        { key: "number", label: "Nummer", type: "text" },
-        { key: "badge", label: "Badge", type: "text" },
-        { key: "title", label: "Titel", type: "text" },
-        { key: "description", label: "Beschreibung", type: "textarea" },
-        { key: "stack", label: "Technologien", type: "stringlist", itemLabel: "Technologie" },
-        { key: "imagePlaceholder", label: "Bildbeschreibung", type: "textarea" },
-      ],
-    },
   ],
   footer: [
     { key: "slogan", label: "Slogan", type: "text" },
@@ -221,6 +334,35 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "ctaButton", label: "CTA-Button", type: "text" },
     { key: "back", label: "Zurück-Label", type: "text" },
   ],
+  pricing_services: [
+    { key: "label", label: "Label", type: "text" },
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "sub", label: "Untertext", type: "textarea" },
+    { key: "teaserHeadline", label: "Teaser-Überschrift", type: "text" },
+    { key: "teaserHeadlineAccent", label: "Teaser-Überschrift (Akzent)", type: "text" },
+    { key: "teaserSub", label: "Teaser-Untertext", type: "textarea" },
+    { key: "teaserCta", label: "Teaser-Button", type: "text" },
+    { key: "teaserFromLabel", label: "„ab“-Label", type: "text" },
+    { key: "hourSuffix", label: "Stunden-Suffix", type: "text" },
+    { key: "customRateLabel", label: "Individueller Preis – Label", type: "text" },
+    { key: "includesLabel", label: "„Beinhaltet“-Label", type: "text" },
+    { key: "rateConsulting", label: "Beratung & Konzeption – Stundensatz (€)", type: "number" },
+    { key: "rateProcess", label: "Prozessoptimierung – Stundensatz (€)", type: "number" },
+    { key: "rateSolutions", label: "Individuelle Lösungen – Stundensatz (€)", type: "number" },
+    {
+      key: "rateCustomDevelopment",
+      label: "Auftragsprogrammierung – Stundensatz (€)",
+      type: "number",
+    },
+    { key: "rateWebPresence", label: "Webauftritt – Stundensatz (€)", type: "number" },
+    { key: "notesTitle", label: "Hinweise-Titel", type: "text" },
+    { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
+    { key: "ctaTitle", label: "CTA-Titel", type: "text" },
+    { key: "ctaSub", label: "CTA-Untertext", type: "textarea" },
+    { key: "ctaButton", label: "CTA-Button", type: "text" },
+    { key: "back", label: "Zurück-Label", type: "text" },
+  ],
   // The legal pages. One markdown field rather than a structured schema:
   // headings and lists are part of the text here, not a form somebody should
   // have to fill in section by section. Leaving a block empty keeps the version
@@ -238,18 +380,28 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
  * make a support conversation impossible.
  */
 export const SECTION_LABELS: Record<string, string> = {
+  home_hero: "Startseite: Titelbereich",
+  why_me: "Wieso ich?",
+  services_overview: "Was ich anbiete?",
+  digital_responsibility: "Digitalisierungsverantwortung",
   hero: "Titelbereich",
   about: "Über mich",
   services: "Leistungen",
+  service_consulting: "Leistung: Beratung & Konzeption",
+  service_process: "Leistung: Prozessoptimierung",
+  service_solutions: "Leistung: Individuelle Lösungen",
+  service_custom_development: "Leistung: Auftragsprogrammierung",
+  service_web_presence: "Leistung: Webauftritt",
+  service_complete_it: "Leistung: Komplette IT",
   process: "Ablauf",
   consulting: "Beratung",
-  tech: "Technologien",
   journal: "Journal-Auswahl",
-  portfolio: "Portfolio",
   faq: "Häufige Fragen",
+  faq_v2: "Häufige Fragen",
   contact: "Kontakt",
   footer: "Fußzeile",
   pricing: "Preise",
+  pricing_services: "Preise nach Leistung",
   cookie_banner: "Cookie-Hinweis",
   legal_impressum: "Impressum (Text)",
   legal_datenschutz: "Datenschutzerklärung (Text)",
@@ -259,8 +411,10 @@ export const SECTION_LABELS: Record<string, string> = {
 export interface PageDef {
   id: string;
   label: string;
-  /** The public path, shown so an operator can check what they are editing. */
+  /** The German public path, shown so an operator can check what they are editing. */
   path: string;
+  /** The English path when it differs structurally from the German one. */
+  pathEn?: string;
   /** Sections this page renders, in the order they appear on it. */
   sections: string[];
 }
@@ -278,15 +432,15 @@ export const PAGES: PageDef[] = [
     label: "Startseite",
     path: "/",
     sections: [
-      "hero",
-      "about",
-      "services",
-      "tech",
+      "home_hero",
+      "why_me",
+      "services_overview",
+      ...SERVICE_SECTION_KEYS,
+      "digital_responsibility",
       "process",
-      "pricing",
+      "pricing_services",
       "journal",
-      "consulting",
-      "faq",
+      "faq_v2",
       "contact",
       "cookie_banner",
       "footer",
@@ -296,7 +450,49 @@ export const PAGES: PageDef[] = [
     id: "preise",
     label: "Preise",
     path: "/preise",
-    sections: ["pricing", "contact", "footer"],
+    sections: ["pricing_services", ...SERVICE_SECTION_KEYS, "contact", "footer"],
+  },
+  {
+    id: "leistung_beratung_konzeption",
+    label: "Leistung: Beratung & Konzeption",
+    path: "/leistungen/beratung-konzeption",
+    pathEn: "/en/services/consulting-planning",
+    sections: ["service_consulting", "contact", "footer"],
+  },
+  {
+    id: "leistung_prozessoptimierung",
+    label: "Leistung: Prozessoptimierung",
+    path: "/leistungen/prozessoptimierung",
+    pathEn: "/en/services/process-optimization",
+    sections: ["service_process", "contact", "footer"],
+  },
+  {
+    id: "leistung_individuelle_loesungen",
+    label: "Leistung: Individuelle Lösungen",
+    path: "/leistungen/individuelle-loesungen",
+    pathEn: "/en/services/tailored-solutions",
+    sections: ["service_solutions", "contact", "footer"],
+  },
+  {
+    id: "leistung_auftragsprogrammierung",
+    label: "Leistung: Auftragsprogrammierung",
+    path: "/leistungen/auftragsprogrammierung",
+    pathEn: "/en/services/contract-development",
+    sections: ["service_custom_development", "contact", "footer"],
+  },
+  {
+    id: "leistung_webauftritt",
+    label: "Leistung: Webauftritt",
+    path: "/leistungen/webauftritt",
+    pathEn: "/en/services/web-presence",
+    sections: ["service_web_presence", "contact", "footer"],
+  },
+  {
+    id: "leistung_komplette_it",
+    label: "Leistung: Komplette IT",
+    path: "/leistungen/komplette-it",
+    pathEn: "/en/services/complete-it",
+    sections: ["service_complete_it", "contact", "footer"],
   },
   { id: "impressum", label: "Impressum", path: "/legal/impressum", sections: ["legal_impressum"] },
   {

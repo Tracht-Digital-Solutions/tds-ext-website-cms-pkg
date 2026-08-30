@@ -526,9 +526,18 @@ function PageSections({
     <div className={staleClass(stale, "tds-card tds-stack")} aria-busy={stale}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h3>{page.label}</h3>
-        {/* The public path, so nobody has to guess which page they are editing.
-            Blank for the leftovers bucket, which is not a page at all. */}
-        {page.path ? <code className="text-xs opacity-70">{page.path}</code> : null}
+        {/* Public paths, so nobody has to guess which localized page they are
+            editing. Blank for the leftovers bucket, which is not a page. */}
+        {page.path ? (
+          page.pathEn ? (
+            <span className="flex flex-wrap items-center justify-end gap-2">
+              <code className="text-xs opacity-70">DE {page.path}</code>
+              <code className="text-xs opacity-70">EN {page.pathEn}</code>
+            </span>
+          ) : (
+            <code className="text-xs opacity-70">{page.path}</code>
+          )
+        ) : null}
       </div>
       <ul className="tds-list">
         {page.present.map((key) => (

@@ -289,6 +289,20 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
   UI status. Reads use shared SWR with visible stale/error state and dirty-editor
   guards. The contract dependency is `^1.10.0`; the shared data peer floor is
   `>=0.33.0`.
+- **CP11:** the landingpage repositioning has isolated content namespaces rather
+  than reusing overrides written for the old copy: `home_hero`, `why_me`,
+  `services_overview`, `digital_responsibility`, `pricing_services` and
+  `faq_v2`. Six code-owned service block keys (`service_consulting`,
+  `service_process`, `service_solutions`, `service_custom_development`,
+  `service_web_presence`, `service_complete_it`) share one shallow structured
+  shape for detail copy, string lists, price copy and repeatable anonymised
+  references. IDs/slugs/hrefs are deliberately absent: public route metadata
+  lives in the landingpage code. `references: []` is valid and means no
+  reference section. The service blocks are shared by the home-page cards, the
+  pricing page and their matching detail page, so `PAGES` lists each wherever
+  it is rendered. Legacy schemas remain available for stored rows under
+  “Weitere Abschnitte”; the current `PAGES` map no longer assigns them to the
+  home or pricing page.
 - **TODO:** extend `SECTION_SCHEMAS` and `PAGES` together if a site introduces a
   new known section or page. Unknown stored sections remain editable under
   “Weitere Abschnitte”.

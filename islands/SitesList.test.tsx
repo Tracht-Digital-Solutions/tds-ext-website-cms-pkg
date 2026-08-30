@@ -152,11 +152,11 @@ describe("the empty state", () => {
   });
 
   it("still offers pages and sections so a new site can create its first override", async () => {
-    respond(/\/cms\/landing\/blocks\/hero\?/, { value: null, lang: "de" });
+    respond(/\/cms\/landing\/blocks\/home_hero\?/, { value: null, lang: "de" });
     const u = await open([]);
     const nav = await screen.findByRole("navigation", { name: "Seite wählen" });
     expect(within(nav).getByRole("button", { name: "Startseite" })).toBeTruthy();
-    const heroRow = (await screen.findByText("Titelbereich")).closest("li")!;
+    const heroRow = (await screen.findByText("Startseite: Titelbereich")).closest("li")!;
     await u.click(within(heroRow).getByRole("button", { name: "DE · Vorgabe" }));
     expect(await screen.findByText(/noch kein eigener Inhalt gespeichert/)).toBeTruthy();
     expect(await screen.findByLabelText("Überschrift")).toBeTruthy();
@@ -172,13 +172,13 @@ describe("the empty state", () => {
 
 describe("choosing a site", () => {
   it("hides the picker when there is only one site", async () => {
-    await open([block("hero")]);
+    await open([block("home_hero")]);
     expect(screen.queryByRole("group", { name: "Website wählen" })).toBeNull();
   });
 
   it("offers a picker once there is a choice", async () => {
     const second = { id: 2, site_key: "shop", name: "Shop", updated_at: "2026-01-01" };
-    await open([block("hero")], [SITE, second]);
+    await open([block("home_hero")], [SITE, second]);
     const picker = await screen.findByRole("group", { name: "Website wählen" });
     expect(within(picker).getByRole("button", { name: "Shop" })).toBeTruthy();
   });
@@ -186,7 +186,7 @@ describe("choosing a site", () => {
 
 describe("choosing a page", () => {
   it("groups sections into the pages a visitor sees", async () => {
-    await open([block("hero"), block("pricing"), block("legal_impressum")]);
+    await open([block("home_hero"), block("pricing_services"), block("legal_impressum")]);
     const nav = await screen.findByRole("navigation", { name: "Seite wählen" });
     expect(within(nav).getByRole("button", { name: "Startseite" })).toBeTruthy();
     expect(within(nav).getByRole("button", { name: "Preise" })).toBeTruthy();
@@ -195,32 +195,39 @@ describe("choosing a page", () => {
 
   it("shows the public path of the selected page", async () => {
     // So nobody has to guess which page they are editing.
-    await open([block("hero")]);
+    await open([block("home_hero")]);
     expect(await screen.findByText("/")).toBeTruthy();
+  });
+
+  it("shows both localized paths for a service page", async () => {
+    const u = await open([block("service_consulting")]);
+    await u.click(screen.getByRole("button", { name: "Leistung: Beratung & Konzeption" }));
+    expect(await screen.findByText("DE /leistungen/beratung-konzeption")).toBeTruthy();
+    expect(screen.getByText("EN /en/services/consulting-planning")).toBeTruthy();
   });
 
   it("names a section in German and keeps its key visible", async () => {
     // The key is what the API, the cache event and every log line call it, so
     // hiding it would make a support conversation impossible.
-    await open([block("hero")]);
-    expect(await screen.findByText("Titelbereich")).toBeTruthy();
-    expect(screen.getByText("hero")).toBeTruthy();
+    await open([block("home_hero")]);
+    expect(await screen.findByText("Startseite: Titelbereich")).toBeTruthy();
+    expect(screen.getByText("home_hero")).toBeTruthy();
   });
 
   it("marks a machine-translated language", async () => {
-    await open([block("hero", "de"), block("hero", "en", 1)]);
+    await open([block("home_hero", "de"), block("home_hero", "en", 1)]);
     expect(await screen.findByRole("button", { name: /EN · auto/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: /^DE$/ })).toBeTruthy();
   });
 
   it("offers a missing language as Vorgabe instead of making it impossible to author", async () => {
-    await open([block("hero", "de")]);
-    const heroRow = (await screen.findByText("Titelbereich")).closest("li")!;
+    await open([block("home_hero", "de")]);
+    const heroRow = (await screen.findByText("Startseite: Titelbereich")).closest("li")!;
     expect(within(heroRow).getByRole("button", { name: "EN · Vorgabe" })).toBeTruthy();
   });
 
   it("switches the section list when another page is chosen", async () => {
-    const u = await open([block("hero"), block("legal_impressum")]);
+    const u = await open([block("home_hero"), block("legal_impressum")]);
     await u.click(screen.getByRole("button", { name: "Impressum" }));
     expect(await screen.findByText("Impressum (Text)")).toBeTruthy();
     expect(screen.queryByText("Titelbereich")).toBeNull();
@@ -228,10 +235,10 @@ describe("choosing a page", () => {
 });
 
 describe("editing a section", () => {
-  /** Open the `hero` block of the landing page in the structured form. */
+  /** Open the current home-page hero block in the structured form. */
   async function openHero(value: unknown = { headline: "Hallo" }) {
-    respond(/\/cms\/landing\/blocks\/hero\?/, { value, lang: "de" });
-    const u = await open([block("hero")]);
+    respond(/\/cms\/landing\/blocks\/home_hero\?/, { value, lang: "de" });
+    const u = await open([block("home_hero")]);
     await u.click(await screen.findByRole("button", { name: /^DE$/ }));
     await screen.findByRole("button", { name: "Speichern" });
     return u;
@@ -290,7 +297,7 @@ describe("editing a section", () => {
     const u = await openHero();
     await u.click(screen.getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(puts()).toHaveLength(1));
-    expect(pathOf(puts()[0]!.url)).toBe("/cms/landing/blocks/hero");
+    expect(pathOf(puts()[0]!.url)).toBe("/cms/landing/blocks/home_hero");
   });
 
   it("coerces a malformed stored array to an empty object instead of crashing", async () => {
@@ -306,6 +313,7 @@ describe("editing a section", () => {
       lang: "de",
     });
     const u = await open([block("pricing")]);
+    await u.click(screen.getByRole("button", { name: "Weitere Abschnitte" }));
     const pricingRow = (await screen.findByText("pricing")).closest("li")!;
     await u.click(within(pricingRow).getByRole("button", { name: /^DE$/ }));
     const rate = (await screen.findByText(/Stundensatz/)).querySelector("input")!;
@@ -317,13 +325,33 @@ describe("editing a section", () => {
     const value = (puts()[0]!.body as { value: { items: Array<Record<string, unknown>> } }).value;
     expect(value.items[0]).toMatchObject({ rate: 95, highlight: true, custom: "keep" });
   });
+
+  it("edits a service detail without inventing a reference placeholder", async () => {
+    respond(/\/cms\/landing\/blocks\/service_consulting\?/, {
+      value: { title: "Beratung & Konzeption", references: [] },
+      lang: "de",
+    });
+    const u = await open([block("service_consulting")]);
+    await u.click(screen.getByRole("button", { name: "Leistung: Beratung & Konzeption" }));
+    const row = (await screen.findByText("service_consulting")).closest("li")!;
+    await u.click(within(row).getByRole("button", { name: /^DE$/ }));
+
+    expect(await screen.findByText("Anonymisierte Referenzen")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "+ Referenz" })).toBeTruthy();
+    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]?.body).toMatchObject({
+      value: { title: "Beratung & Konzeption", references: [] },
+      lang: "de",
+    });
+  });
 });
 
 describe("what the save says afterwards", () => {
   async function saveWith(response: Record<string, unknown>, status = 200) {
-    respond(/\/cms\/landing\/blocks\/hero\?/, { value: { headline: "x" }, lang: "de" });
-    respond(/\/cms\/landing\/blocks\/hero$/, response, status, "PUT");
-    const u = await open([block("hero")]);
+    respond(/\/cms\/landing\/blocks\/home_hero\?/, { value: { headline: "x" }, lang: "de" });
+    respond(/\/cms\/landing\/blocks\/home_hero$/, response, status, "PUT");
+    const u = await open([block("home_hero")]);
     await u.click(await screen.findByRole("button", { name: /^DE$/ }));
     await u.click(await screen.findByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(toasts.length).toBeGreaterThan(0));
@@ -361,8 +389,8 @@ describe("what the save says afterwards", () => {
   it("does not overwrite typed content when a stale block refresh finishes", async () => {
     const now = Date.now();
     put("/cms/sites", { sites: [SITE] });
-    put("/cms/landing/blocks", { blocks: [block("hero")] });
-    put("/cms/landing/blocks/hero?lang=de", { value: { headline: "Alt" } });
+    put("/cms/landing/blocks", { blocks: [block("home_hero")] });
+    put("/cms/landing/blocks/home_hero?lang=de", { value: { headline: "Alt" } });
     vi.spyOn(Date, "now").mockReturnValue(now + 31_000);
 
     let finishBlock!: () => void;
@@ -370,7 +398,7 @@ describe("what the save says afterwards", () => {
       "fetch",
       vi.fn((url: string) => {
         const path = pathOf(url);
-        if (path === "/cms/landing/blocks/hero?lang=de") {
+        if (path === "/cms/landing/blocks/home_hero?lang=de") {
           return new Promise<Response>((resolve) => {
             finishBlock = () => resolve({
               ok: true,
@@ -379,13 +407,13 @@ describe("what the save says afterwards", () => {
             } as Response);
           });
         }
-        const body = path === "/cms/sites" ? { sites: [SITE] } : { blocks: [block("hero")] };
+        const body = path === "/cms/sites" ? { sites: [SITE] } : { blocks: [block("home_hero")] };
         return Promise.resolve({ ok: true, status: 200, json: async () => body } as Response);
       }),
     );
 
     render(<SitesList />);
-    const heroRow = (await screen.findByText("Titelbereich")).closest("li")!;
+    const heroRow = (await screen.findByText("Startseite: Titelbereich")).closest("li")!;
     const u = user();
     await u.click(within(heroRow).getByRole("button", { name: /^DE$/ }));
     const headline = (await screen.findByLabelText("Überschrift")) as HTMLInputElement;

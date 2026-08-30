@@ -18,6 +18,11 @@ an empty page.
 - The page model always exposes the known pages, sections and both languages,
   even before a database row exists. `Vorgabe` means the public site's local
   default is currently in use; saving creates the first override.
+- The redesigned landing page uses separate structured blocks for its home
+  sections, service-based pricing and six service detail pages. Service IDs and
+  localized slugs stay in the public site's code; editors manage only visible
+  copy, flat lists and optional anonymised references. An empty reference list
+  is valid and lets the public page omit that area entirely.
 - Lists use stale-while-revalidate. Previously loaded data appears immediately
   with the `tds-stale` state while it refreshes, and a failed refresh is shown as
   an error without discarding the last usable data. A background response never
