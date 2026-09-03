@@ -58,6 +58,7 @@ export const SERVICE_SECTION_KEYS = [
   "service_solutions",
   "service_custom_development",
   "service_web_presence",
+  "service_marketing",
   "service_complete_it",
 ] as const;
 
@@ -240,6 +241,7 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
   service_solutions: serviceDetailSchema(),
   service_custom_development: serviceDetailSchema(),
   service_web_presence: serviceDetailSchema(),
+  service_marketing: serviceDetailSchema(),
   service_complete_it: serviceDetailSchema(),
   faq: faqSchema(),
   faq_v2: faqSchema(),
@@ -356,6 +358,7 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
       type: "number",
     },
     { key: "rateWebPresence", label: "Webauftritt – Stundensatz (€)", type: "number" },
+    { key: "rateMarketing", label: "Marketing – Stundensatz (€)", type: "number" },
     { key: "notesTitle", label: "Hinweise-Titel", type: "text" },
     { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
     { key: "ctaTitle", label: "CTA-Titel", type: "text" },
@@ -392,6 +395,7 @@ export const SECTION_LABELS: Record<string, string> = {
   service_solutions: "Leistung: Individuelle Lösungen",
   service_custom_development: "Leistung: Auftragsprogrammierung",
   service_web_presence: "Leistung: Webauftritt",
+  service_marketing: "Leistung: Marketing",
   service_complete_it: "Leistung: Komplette IT",
   process: "Ablauf",
   consulting: "Beratung",
@@ -486,6 +490,13 @@ export const PAGES: PageDef[] = [
     path: "/leistungen/webauftritt",
     pathEn: "/en/services/web-presence",
     sections: ["service_web_presence", "contact", "footer"],
+  },
+  {
+    id: "leistung_marketing",
+    label: "Leistung: Marketing",
+    path: "/leistungen/marketing",
+    pathEn: "/en/services/marketing",
+    sections: ["service_marketing", "contact", "footer"],
   },
   {
     id: "leistung_komplette_it",

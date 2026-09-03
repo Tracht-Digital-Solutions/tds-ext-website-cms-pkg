@@ -61,6 +61,7 @@ describe("resolvePages", () => {
       ["service_solutions", "/leistungen/individuelle-loesungen", "/en/services/tailored-solutions"],
       ["service_custom_development", "/leistungen/auftragsprogrammierung", "/en/services/contract-development"],
       ["service_web_presence", "/leistungen/webauftritt", "/en/services/web-presence"],
+      ["service_marketing", "/leistungen/marketing", "/en/services/marketing"],
       ["service_complete_it", "/leistungen/komplette-it", "/en/services/complete-it"],
     ] as const;
 
@@ -185,6 +186,7 @@ describe("section metadata", () => {
       "rateSolutions",
       "rateCustomDevelopment",
       "rateWebPresence",
+      "rateMarketing",
       "notesTitle",
       "notes",
       "ctaTitle",
