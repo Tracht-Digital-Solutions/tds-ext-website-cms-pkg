@@ -46,7 +46,7 @@ export type ObjectListField = {
 export type Field = LeafField | StringListField | ObjectListField;
 
 /**
- * Stable content-block keys for the six landing-page services.
+ * Stable content-block keys for the four landing-page services.
  *
  * The public site owns service IDs, slugs and route lookup. Keeping those
  * values out of the editable schema means an editorial change can never break
@@ -56,10 +56,7 @@ export const SERVICE_SECTION_KEYS = [
   "service_consulting",
   "service_process",
   "service_solutions",
-  "service_custom_development",
   "service_web_presence",
-  "service_marketing",
-  "service_complete_it",
 ] as const;
 
 export type ServiceSectionKey = (typeof SERVICE_SECTION_KEYS)[number];
@@ -112,7 +109,7 @@ function serviceDetailSchema(): Field[] {
     { key: "referencesHeadline", label: "Referenzen – Überschrift", type: "text" },
     {
       key: "references",
-      label: "Anonymisierte Referenzen",
+      label: "Veröffentlichte Referenzen",
       type: "list",
       itemLabel: "Referenz",
       itemFields: [
@@ -239,10 +236,7 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
   service_consulting: serviceDetailSchema(),
   service_process: serviceDetailSchema(),
   service_solutions: serviceDetailSchema(),
-  service_custom_development: serviceDetailSchema(),
   service_web_presence: serviceDetailSchema(),
-  service_marketing: serviceDetailSchema(),
-  service_complete_it: serviceDetailSchema(),
   faq: faqSchema(),
   faq_v2: faqSchema(),
   contact: [
@@ -347,18 +341,11 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "teaserCta", label: "Teaser-Button", type: "text" },
     { key: "teaserFromLabel", label: "„ab“-Label", type: "text" },
     { key: "hourSuffix", label: "Stunden-Suffix", type: "text" },
-    { key: "customRateLabel", label: "Individueller Preis – Label", type: "text" },
     { key: "includesLabel", label: "„Beinhaltet“-Label", type: "text" },
     { key: "rateConsulting", label: "Beratung & Konzeption – Stundensatz (€)", type: "number" },
     { key: "rateProcess", label: "Prozessoptimierung – Stundensatz (€)", type: "number" },
     { key: "rateSolutions", label: "Individuelle Lösungen – Stundensatz (€)", type: "number" },
-    {
-      key: "rateCustomDevelopment",
-      label: "Auftragsprogrammierung – Stundensatz (€)",
-      type: "number",
-    },
     { key: "rateWebPresence", label: "Webauftritt – Stundensatz (€)", type: "number" },
-    { key: "rateMarketing", label: "Marketing – Stundensatz (€)", type: "number" },
     { key: "notesTitle", label: "Hinweise-Titel", type: "text" },
     { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
     { key: "ctaTitle", label: "CTA-Titel", type: "text" },
@@ -393,10 +380,7 @@ export const SECTION_LABELS: Record<string, string> = {
   service_consulting: "Leistung: Beratung & Konzeption",
   service_process: "Leistung: Prozessoptimierung",
   service_solutions: "Leistung: Individuelle Lösungen",
-  service_custom_development: "Leistung: Auftragsprogrammierung",
   service_web_presence: "Leistung: Webauftritt",
-  service_marketing: "Leistung: Marketing",
-  service_complete_it: "Leistung: Komplette IT",
   process: "Ablauf",
   consulting: "Beratung",
   journal: "Journal-Auswahl",
@@ -478,32 +462,11 @@ export const PAGES: PageDef[] = [
     sections: ["service_solutions", "contact", "footer"],
   },
   {
-    id: "leistung_auftragsprogrammierung",
-    label: "Leistung: Auftragsprogrammierung",
-    path: "/leistungen/auftragsprogrammierung",
-    pathEn: "/en/services/contract-development",
-    sections: ["service_custom_development", "contact", "footer"],
-  },
-  {
     id: "leistung_webauftritt",
     label: "Leistung: Webauftritt",
     path: "/leistungen/webauftritt",
     pathEn: "/en/services/web-presence",
     sections: ["service_web_presence", "contact", "footer"],
-  },
-  {
-    id: "leistung_marketing",
-    label: "Leistung: Marketing",
-    path: "/leistungen/marketing",
-    pathEn: "/en/services/marketing",
-    sections: ["service_marketing", "contact", "footer"],
-  },
-  {
-    id: "leistung_komplette_it",
-    label: "Leistung: Komplette IT",
-    path: "/leistungen/komplette-it",
-    pathEn: "/en/services/complete-it",
-    sections: ["service_complete_it", "contact", "footer"],
   },
   { id: "impressum", label: "Impressum", path: "/legal/impressum", sections: ["legal_impressum"] },
   {

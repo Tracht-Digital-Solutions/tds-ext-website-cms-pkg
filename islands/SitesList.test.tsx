@@ -336,7 +336,7 @@ describe("editing a section", () => {
     const row = (await screen.findByText("service_consulting")).closest("li")!;
     await u.click(within(row).getByRole("button", { name: /^DE$/ }));
 
-    expect(await screen.findByText("Anonymisierte Referenzen")).toBeTruthy();
+    expect(await screen.findByText("Veröffentlichte Referenzen")).toBeTruthy();
     expect(screen.getByRole("button", { name: "+ Referenz" })).toBeTruthy();
     await u.click(screen.getByRole("button", { name: "Speichern" }));
     await waitFor(() => expect(puts()).toHaveLength(1));
