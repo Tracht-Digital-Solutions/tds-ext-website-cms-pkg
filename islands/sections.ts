@@ -12,10 +12,11 @@
  *
  * ### A section may appear on more than one page, and that is not a bug
  *
- * `footer` and `contact` are rendered on every page; `pricing` is rendered by
- * `/preise` *and* by the teaser on the home page. Listing a section under each
- * page it appears on is the honest presentation — there is still exactly one
- * block behind it, so editing it from either place edits the same row. The
+ * `footer` and `contact` are rendered on every page; `first_call` sits in the
+ * home page's process section AND above every service page's closing call to
+ * action. Listing a section under each page it appears on is the honest
+ * presentation — there is still exactly one block behind it, so editing it
+ * from either place edits the same row. The
  * public site's own cache route table makes the same over-approximation for
  * the same reason (`tds-landingpage-frontend/src/lib/cache.ts`).
  *
@@ -132,6 +133,7 @@ function faqSchema(): Field[] {
   return [
     { key: "label", label: "Label", type: "text" },
     { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
     {
       key: "items",
       label: "Fragen",
@@ -149,14 +151,31 @@ function faqSchema(): Field[] {
 // structured form only renders the fields listed here; any other keys in the
 // block survive untouched (the form spreads them), so a partial schema is safe.
 export const SECTION_SCHEMAS: Record<string, Field[]> = {
+  // The 2026-09 landingpage redesign. A field the site stopped rendering is left
+  // out of its form (`home_hero.scrollHint`, `why_me.reasons`, the
+  // `pricing_services` teaser) — a stored value survives, because the form spreads.
   home_hero: [
+    { key: "eyebrow", label: "Zielgruppe (über der Überschrift)", type: "text" },
     { key: "headline", label: "Überschrift", type: "text" },
     { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
     { key: "headlineSuffix", label: "Überschrift (Suffix)", type: "text" },
-    { key: "sub", label: "Untertext", type: "textarea" },
-    { key: "cta1", label: "Button 1", type: "text" },
+    { key: "sub", label: "Nutzen (Untertext, *Betonung* mit Sternchen)", type: "textarea" },
+    { key: "cta1", label: "Button 1 (Erstgespräch)", type: "text" },
     { key: "cta2", label: "Button 2", type: "text" },
-    { key: "scrollHint", label: "Scroll-Hinweis", type: "text" },
+  ],
+  home_trust: [
+    { key: "title", label: "Titel der Karte", type: "text" },
+    {
+      key: "facts",
+      label: "Fakten (höchstens drei)",
+      type: "list",
+      itemLabel: "Fakt",
+      itemFields: [
+        { key: "title", label: "Titel", type: "text" },
+        { key: "text", label: "Text – {name}, {town} und {rate} setzt die Seite ein", type: "textarea" },
+        { key: "linkLabel", label: "Linktext", type: "text" },
+      ],
+    },
   ],
   why_me: [
     { key: "headline", label: "Überschrift", type: "text" },
@@ -164,21 +183,45 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "lead", label: "Lead", type: "textarea" },
     { key: "p1", label: "Absatz 1", type: "textarea" },
     { key: "p2", label: "Absatz 2", type: "textarea" },
-    {
-      key: "reasons",
-      label: "Gründe",
-      type: "list",
-      itemLabel: "Grund",
-      itemFields: [
-        { key: "title", label: "Titel", type: "text" },
-        { key: "description", label: "Beschreibung", type: "textarea" },
-      ],
-    },
   ],
   services_overview: [
     { key: "headline", label: "Überschrift", type: "text" },
     { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
     { key: "intro", label: "Einleitung", type: "textarea" },
+  ],
+  references_home: [
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "intro", label: "Einleitung", type: "textarea" },
+    { key: "label", label: "Hinweis zur Veröffentlichung", type: "textarea" },
+  ],
+  first_call: [
+    { key: "title", label: "Titel", type: "text" },
+    { key: "nextStepsTitle", label: "Titel im Kontaktbereich", type: "text" },
+    {
+      key: "items",
+      label: "Punkte",
+      type: "list",
+      itemLabel: "Punkt",
+      itemFields: [
+        { key: "label", label: "Bezeichnung", type: "text" },
+        { key: "text", label: "Text", type: "textarea" },
+      ],
+    },
+    { key: "cta", label: "Button", type: "text" },
+  ],
+  website_demos: [
+    { key: "headline", label: "Überschrift", type: "text" },
+    { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
+    { key: "intro", label: "Einleitung (Startseite)", type: "textarea" },
+    { key: "serviceIntro", label: "Einleitung (Leistung Webauftritt)", type: "textarea" },
+    { key: "headlineSingle", label: "Überschrift bei nur einer Beispielseite", type: "text" },
+    { key: "introSingle", label: "Einleitung bei nur einer Beispielseite (Startseite)", type: "textarea" },
+    {
+      key: "serviceIntroSingle",
+      label: "Einleitung bei nur einer Beispielseite (Leistung Webauftritt)",
+      type: "textarea",
+    },
   ],
   digital_responsibility: [
     { key: "headline", label: "Überschrift", type: "text" },
@@ -330,28 +373,37 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "ctaButton", label: "CTA-Button", type: "text" },
     { key: "back", label: "Zurück-Label", type: "text" },
   ],
+  // The prices are a section of the home page since 2026-09 (`/preise` only
+  // redirects): no teaser, no back link, no notes title of its own — the
+  // explanation box takes its title from `pricing_logic`.
   pricing_services: [
-    { key: "label", label: "Label", type: "text" },
     { key: "headline", label: "Überschrift", type: "text" },
     { key: "headlineAccent", label: "Überschrift (Akzent)", type: "text" },
     { key: "sub", label: "Untertext", type: "textarea" },
-    { key: "teaserHeadline", label: "Teaser-Überschrift", type: "text" },
-    { key: "teaserHeadlineAccent", label: "Teaser-Überschrift (Akzent)", type: "text" },
-    { key: "teaserSub", label: "Teaser-Untertext", type: "textarea" },
-    { key: "teaserCta", label: "Teaser-Button", type: "text" },
-    { key: "teaserFromLabel", label: "„ab“-Label", type: "text" },
     { key: "hourSuffix", label: "Stunden-Suffix", type: "text" },
     { key: "includesLabel", label: "„Beinhaltet“-Label", type: "text" },
     { key: "rateConsulting", label: "Beratung & Konzeption – Stundensatz (€)", type: "number" },
     { key: "rateProcess", label: "Prozessoptimierung – Stundensatz (€)", type: "number" },
     { key: "rateSolutions", label: "Individuelle Lösungen – Stundensatz (€)", type: "number" },
     { key: "rateWebPresence", label: "Webauftritt – Stundensatz (€)", type: "number" },
-    { key: "notesTitle", label: "Hinweise-Titel", type: "text" },
     { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
     { key: "ctaTitle", label: "CTA-Titel", type: "text" },
     { key: "ctaSub", label: "CTA-Untertext", type: "textarea" },
     { key: "ctaButton", label: "CTA-Button", type: "text" },
-    { key: "back", label: "Zurück-Label", type: "text" },
+  ],
+  pricing_logic: [
+    { key: "title", label: "Titel", type: "text" },
+    {
+      key: "steps",
+      label: "Schritte",
+      type: "list",
+      itemLabel: "Schritt",
+      itemFields: [
+        { key: "title", label: "Titel", type: "text" },
+        { key: "text", label: "Text", type: "textarea" },
+      ],
+    },
+    { key: "note", label: "Hinweis", type: "textarea" },
   ],
   // The legal pages. One markdown field rather than a structured schema:
   // headings and lists are part of the text here, not a form somebody should
@@ -371,9 +423,14 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
  */
 export const SECTION_LABELS: Record<string, string> = {
   home_hero: "Startseite: Titelbereich",
+  home_trust: "Startseite: Vertrauenskarte",
   why_me: "Wieso ich?",
   services_overview: "Was ich anbiete?",
-  digital_responsibility: "Digitalisierungsverantwortung",
+  references_home: "Kundenprojekte",
+  first_call: "Das Erstgespräch",
+  website_demos: "Beispielseiten",
+  pricing_logic: "So entsteht Ihr Preis",
+  digital_responsibility: "Digitalisierungsverantwortung (nicht mehr angezeigt)",
   hero: "Titelbereich",
   about: "Über mich",
   services: "Leistungen",
@@ -389,7 +446,7 @@ export const SECTION_LABELS: Record<string, string> = {
   contact: "Kontakt",
   footer: "Fußzeile",
   pricing: "Preise",
-  pricing_services: "Preise nach Leistung",
+  pricing_services: "Preise",
   cookie_banner: "Cookie-Hinweis",
   legal_impressum: "Impressum (Text)",
   legal_datenschutz: "Datenschutzerklärung (Text)",
@@ -419,15 +476,23 @@ export const PAGES: PageDef[] = [
     id: "startseite",
     label: "Startseite",
     path: "/",
+    // In render order since the 2026-09 redesign. The prices are a section of
+    // this page (`/preise` answers with a 301 to `/#preise`), so there is no
+    // pricing page of its own any more. The service finder has no block: its
+    // copy is code-owned in the site.
     sections: [
       "home_hero",
+      "home_trust",
       "why_me",
       "services_overview",
       ...SERVICE_SECTION_KEYS,
-      "digital_responsibility",
+      "references_home",
       "process",
-      "pricing_services",
+      "first_call",
+      "website_demos",
       "journal",
+      "pricing_services",
+      "pricing_logic",
       "faq_v2",
       "contact",
       "cookie_banner",
@@ -435,38 +500,32 @@ export const PAGES: PageDef[] = [
     ],
   },
   {
-    id: "preise",
-    label: "Preise",
-    path: "/preise",
-    sections: ["pricing_services", ...SERVICE_SECTION_KEYS, "contact", "footer"],
-  },
-  {
     id: "leistung_beratung_konzeption",
     label: "Leistung: Beratung & Konzeption",
     path: "/leistungen/beratung-konzeption",
     pathEn: "/en/services/consulting-planning",
-    sections: ["service_consulting", "contact", "footer"],
+    sections: ["service_consulting", "first_call", "contact", "footer"],
   },
   {
     id: "leistung_prozessoptimierung",
     label: "Leistung: Prozessoptimierung",
     path: "/leistungen/prozessoptimierung",
     pathEn: "/en/services/process-optimization",
-    sections: ["service_process", "contact", "footer"],
+    sections: ["service_process", "first_call", "contact", "footer"],
   },
   {
     id: "leistung_individuelle_loesungen",
     label: "Leistung: Individuelle Lösungen",
     path: "/leistungen/individuelle-loesungen",
     pathEn: "/en/services/tailored-solutions",
-    sections: ["service_solutions", "contact", "footer"],
+    sections: ["service_solutions", "first_call", "contact", "footer"],
   },
   {
     id: "leistung_webauftritt",
     label: "Leistung: Webauftritt",
     path: "/leistungen/webauftritt",
     pathEn: "/en/services/web-presence",
-    sections: ["service_web_presence", "contact", "footer"],
+    sections: ["service_web_presence", "website_demos", "first_call", "contact", "footer"],
   },
   { id: "impressum", label: "Impressum", path: "/legal/impressum", sections: ["legal_impressum"] },
   {

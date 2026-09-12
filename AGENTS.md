@@ -303,6 +303,18 @@ Verified by mutation: 16 deliberate breakages introduced, 16 caught.
   it is rendered. Legacy schemas remain available for stored rows under
   “Weitere Abschnitte”; the current `PAGES` map no longer assigns them to the
   home or pricing page.
+- **CP12:** the 2026-09 landingpage redesign (tds-landingpage-frontend 0.31–0.32).
+  New structured sections `home_trust` (the hero's trust card — `{name}`,
+  `{town}` and `{rate}` are filled in by the site), `references_home`,
+  `first_call` (process section, contact block and every service page),
+  `website_demos` (home page and the Webauftritt page) and `pricing_logic`;
+  `home_hero` gained `eyebrow`, the FAQ schema `headlineAccent`. Fields the site
+  stopped rendering are gone from the forms (`home_hero.scrollHint`,
+  `why_me.reasons`, the `pricing_services` teaser, `label`, `notesTitle` and
+  `back`); stored values survive the spread. `PAGES` has no pricing page any
+  more — `/preise` answers with a 301 to the home page's `#preise` — and
+  `digital_responsibility` is off the home page (a stored row still shows under
+  "Weitere Abschnitte"). The site's service finder is code-owned and has no block.
 - **TODO:** extend `SECTION_SCHEMAS` and `PAGES` together if a site introduces a
   new known section or page. Unknown stored sections remain editable under
   “Weitere Abschnitte”.
@@ -314,8 +326,8 @@ Update the docs and commit them with the code. **Do not touch `version` in
 `npm version <bump>` on top of what is committed and writes `composer.json` in
 lockstep, so a hand-bump double-bumps. A `0.x` caret is minor-locked, so a
 double-bump can land outside the product's pin and silently ship nothing. Pick
-the bump on the Release button instead; keep it inside the `0.2.x` line
-`tds-admin-frontend` pins.
+the bump on the Release button instead; keep it inside the `0.4.x` line
+`tds-admin-frontend` pins (`tests/packaging.test.ts` holds the same line).
 
 ## Mobile layout
 

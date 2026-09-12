@@ -8,6 +8,8 @@ import {
   sectionLabel,
 } from "./sections.js";
 
+const keysOf = (section: string) => SECTION_SCHEMAS[section]?.map((field) => field.key);
+
 /** The page model is a map for known landing pages, never a content filter. */
 describe("resolvePages", () => {
   it("always offers every known page, even before an override exists", () => {
@@ -17,41 +19,53 @@ describe("resolvePages", () => {
   it("always offers known sections so a new site can create its first block", () => {
     const home = resolvePages([]).find((p) => p.id === "startseite");
     expect(home?.present).toContain("home_hero");
+    expect(home?.present).toContain("home_trust");
     expect(home?.present).toContain("services_overview");
     expect(home?.present).toContain("journal");
   });
 
   it("lists a shared section under every page that renders it", () => {
     const pages = resolvePages([]);
-    expect(pages.find((p) => p.id === "startseite")?.present).toContain("pricing_services");
-    expect(pages.find((p) => p.id === "preise")?.present).toContain("pricing_services");
-    expect(pages.find((p) => p.id === "startseite")?.present).toContain("footer");
-    expect(pages.find((p) => p.id === "preise")?.present).toContain("footer");
+    const servicePages = pages.filter((p) => SERVICE_SECTION_KEYS.includes(p.sections[0] as never));
+    expect(servicePages).toHaveLength(SERVICE_SECTION_KEYS.length);
+    for (const page of [pages.find((p) => p.id === "startseite")!, ...servicePages]) {
+      expect(page.present, page.id).toContain("first_call");
+      expect(page.present, page.id).toContain("contact");
+      expect(page.present, page.id).toContain("footer");
+    }
   });
 
-  it("maps the redesigned home and pricing pages without reviving legacy blocks", () => {
+  it("maps the redesigned home page in render order, without legacy blocks", () => {
     const home = PAGES.find((p) => p.id === "startseite");
     expect(home?.sections).toEqual([
       "home_hero",
+      "home_trust",
       "why_me",
       "services_overview",
       ...SERVICE_SECTION_KEYS,
-      "digital_responsibility",
+      "references_home",
       "process",
-      "pricing_services",
+      "first_call",
+      "website_demos",
       "journal",
+      "pricing_services",
+      "pricing_logic",
       "faq_v2",
       "contact",
       "cookie_banner",
       "footer",
     ]);
-    expect(home?.sections).not.toEqual(expect.arrayContaining(["hero", "about", "services", "tech", "consulting", "faq"]));
-    expect(PAGES.find((p) => p.id === "preise")?.sections).toEqual([
-      "pricing_services",
-      ...SERVICE_SECTION_KEYS,
-      "contact",
-      "footer",
-    ]);
+    expect(home?.sections).not.toEqual(
+      expect.arrayContaining(["hero", "about", "services", "tech", "consulting", "faq"]),
+    );
+    // Not rendered since 2026-09; a stored row still lands under "Weitere Abschnitte".
+    expect(home?.sections).not.toContain("digital_responsibility");
+  });
+
+  it("has no pricing page: /preise only redirects to the home page's section", () => {
+    expect(PAGES.find((p) => p.id === "preise")).toBeUndefined();
+    expect(PAGES.some((p) => p.path === "/preise")).toBe(false);
+    expect(resolvePages(["digital_responsibility"]).at(-1)?.present).toEqual(["digital_responsibility"]);
   });
 
   it("maps each stable service block to its localized public route pair", () => {
@@ -65,9 +79,12 @@ describe("resolvePages", () => {
     expect(SERVICE_SECTION_KEYS).toEqual(expected.map(([key]) => key));
     for (const [key, path, pathEn] of expected) {
       const page = PAGES.find((candidate) => candidate.sections[0] === key);
-      expect(page, key).toMatchObject({ path, pathEn, sections: [key, "contact", "footer"] });
+      const sections =
+        key === "service_web_presence"
+          ? [key, "website_demos", "first_call", "contact", "footer"]
+          : [key, "first_call", "contact", "footer"];
+      expect(page, key).toMatchObject({ path, pathEn, sections });
       expect(PAGES.find((candidate) => candidate.id === "startseite")?.sections, key).toContain(key);
-      expect(PAGES.find((candidate) => candidate.id === "preise")?.sections, key).toContain(key);
     }
   });
 
@@ -102,19 +119,61 @@ describe("section metadata", () => {
     }
   });
 
+  it("gives every section a page shows a form", () => {
+    for (const page of PAGES) {
+      for (const key of page.sections) expect(SECTION_SCHEMAS[key], `${page.id}: ${key}`).toBeDefined();
+    }
+  });
+
   it("falls back to the raw key rather than hiding an unknown section", () => {
     expect(sectionLabel("shop_teaser")).toBe("shop_teaser");
   });
 
-  it("covers the live landingpage additions", () => {
-    expect(SECTION_SCHEMAS.home_hero).toBeDefined();
-    expect(SECTION_SCHEMAS.why_me).toBeDefined();
-    expect(SECTION_SCHEMAS.services_overview).toBeDefined();
-    expect(SECTION_SCHEMAS.digital_responsibility).toBeDefined();
-    expect(SECTION_SCHEMAS.pricing_services).toBeDefined();
+  it("covers the live landingpage sections", () => {
+    for (const key of [
+      "home_hero",
+      "home_trust",
+      "why_me",
+      "services_overview",
+      "references_home",
+      "first_call",
+      "website_demos",
+      "pricing_services",
+      "pricing_logic",
+      "journal",
+      "cookie_banner",
+    ]) {
+      expect(SECTION_SCHEMAS[key], key).toBeDefined();
+    }
     expect(SECTION_SCHEMAS.faq_v2).toEqual(SECTION_SCHEMAS.faq);
-    expect(SECTION_SCHEMAS.journal).toBeDefined();
-    expect(SECTION_SCHEMAS.cookie_banner).toBeDefined();
+  });
+
+  it("matches the redesigned blocks' shapes", () => {
+    // Copied from the landingpage's `cmsFor()` defaults (src/lib/homeContent.ts).
+    expect(keysOf("home_hero")).toEqual(["eyebrow", "headline", "headlineAccent", "headlineSuffix", "sub", "cta1", "cta2"]);
+    expect(keysOf("home_trust")).toEqual(["title", "facts"]);
+    expect(SECTION_SCHEMAS.home_trust?.find((field) => field.key === "facts")).toMatchObject({
+      type: "list",
+      itemFields: [{ key: "title" }, { key: "text" }, { key: "linkLabel" }],
+    });
+    expect(keysOf("first_call")).toEqual(["title", "nextStepsTitle", "items", "cta"]);
+    expect(keysOf("pricing_logic")).toEqual(["title", "steps", "note"]);
+    expect(keysOf("references_home")).toEqual(["headline", "headlineAccent", "intro", "label"]);
+    expect(keysOf("website_demos")).toEqual([
+      "headline",
+      "headlineAccent",
+      "intro",
+      "serviceIntro",
+      "headlineSingle",
+      "introSingle",
+      "serviceIntroSingle",
+    ]);
+    expect(keysOf("faq")).toEqual(["label", "headline", "headlineAccent", "items"]);
+  });
+
+  it("leaves fields the site stopped rendering out of the forms", () => {
+    expect(keysOf("home_hero")).not.toContain("scrollHint");
+    expect(keysOf("why_me")).not.toContain("reasons");
   });
 
   it("pins the service detail copy and anonymised-reference contract", () => {
@@ -164,29 +223,21 @@ describe("section metadata", () => {
     }
   });
 
-  it("pins the flat service-pricing fields and keeps service content out of that block", () => {
-    expect(SECTION_SCHEMAS.pricing_services?.map((field) => field.key)).toEqual([
-      "label",
+  it("pins the pricing section's fields and keeps service content out of that block", () => {
+    expect(keysOf("pricing_services")).toEqual([
       "headline",
       "headlineAccent",
       "sub",
-      "teaserHeadline",
-      "teaserHeadlineAccent",
-      "teaserSub",
-      "teaserCta",
-      "teaserFromLabel",
       "hourSuffix",
       "includesLabel",
       "rateConsulting",
       "rateProcess",
       "rateSolutions",
       "rateWebPresence",
-      "notesTitle",
       "notes",
       "ctaTitle",
       "ctaSub",
       "ctaButton",
-      "back",
     ]);
     expect(SECTION_SCHEMAS.pricing_services?.some((field) => field.key === "items")).toBe(false);
   });

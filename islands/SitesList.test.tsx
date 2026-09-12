@@ -189,8 +189,10 @@ describe("choosing a page", () => {
     await open([block("home_hero"), block("pricing_services"), block("legal_impressum")]);
     const nav = await screen.findByRole("navigation", { name: "Seite wählen" });
     expect(within(nav).getByRole("button", { name: "Startseite" })).toBeTruthy();
-    expect(within(nav).getByRole("button", { name: "Preise" })).toBeTruthy();
+    expect(within(nav).getByRole("button", { name: "Leistung: Webauftritt" })).toBeTruthy();
     expect(within(nav).getByRole("button", { name: "Impressum" })).toBeTruthy();
+    // The prices are a section of the home page since 2026-09; /preise only redirects.
+    expect(within(nav).queryByRole("button", { name: "Preise" })).toBeNull();
   });
 
   it("shows the public path of the selected page", async () => {
