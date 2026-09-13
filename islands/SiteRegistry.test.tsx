@@ -177,6 +177,28 @@ describe("per-site API connection", () => {
     expect(posts()[0]!.body).toMatchObject({ bindings: { blog: "journal" } });
   });
 
+  it("shows the reason the API gives for a failed pairing", async () => {
+    // Without log access this line is the operator's only diagnosis.
+    respond(/\/cms\/sites\/landing\/connection\/pairing$/, {
+      error: "SETTINGS_ENCRYPTION_KEY ist für sichere Site-Verbindungen erforderlich.",
+      code: "encryption_not_configured",
+    }, 503, "POST");
+    const u = await renderRegistry();
+    await u.type(await screen.findByLabelText("Adresse der öffentlichen Website"), "https://site.example");
+    await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
+    expect(await screen.findByText(
+      "Verbinden fehlgeschlagen (HTTP 503): SETTINGS_ENCRYPTION_KEY ist für sichere Site-Verbindungen erforderlich.",
+    )).toBeTruthy();
+  });
+
+  it("falls back to the status code when the API gives no reason", async () => {
+    respond(/\/cms\/sites\/landing\/connection\/pairing$/, {}, 503, "POST");
+    const u = await renderRegistry();
+    await u.type(await screen.findByLabelText("Adresse der öffentlichen Website"), "https://site.example");
+    await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
+    expect(await screen.findByText("Verbinden fehlgeschlagen (HTTP 503).")).toBeTruthy();
+  });
+
   it("asks the cache to rebuild everything, not one page", async () => {
     // This button is the catch-up for when a save's targeted rebuild did not
     // land, so it must not be targeted itself.
