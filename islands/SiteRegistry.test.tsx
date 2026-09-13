@@ -199,6 +199,21 @@ describe("per-site API connection", () => {
     expect(await screen.findByText("Verbinden fehlgeschlagen (HTTP 503).")).toBeTruthy();
   });
 
+  it("says why the site did not take the pairing directly", async () => {
+    // The refusal happens on the site's host; the API relays its code.
+    respond(/\/cms\/sites\/landing\/connection\/pairing$/, {
+      delivered: false,
+      error: "HTTP 422: invalid_origin",
+      fallback_url: "https://site.example/install#pairing_token=once-only-secret",
+    }, 201, "POST");
+    const u = await renderRegistry();
+    await u.type(await screen.findByLabelText("Adresse der öffentlichen Website"), "https://site.example");
+    await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
+    expect(await screen.findByText(
+      "Die Website hat die Verbindung nicht direkt angenommen (HTTP 422: invalid_origin). Öffnen Sie den Einrichtungslink auf dem Website-Server.",
+    )).toBeTruthy();
+  });
+
   it("asks the cache to rebuild everything, not one page", async () => {
     // This button is the catch-up for when a save's targeted rebuild did not
     // land, so it must not be targeted itself.
