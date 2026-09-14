@@ -358,17 +358,11 @@ function SiteEditor({ site }: { site: Site }) {
   );
   const pages = useMemo(() => resolvePages(sectionKeys), [sectionKeys]);
 
-  useEffect(() => {
-    if (pages.length === 0) {
-      if (pageId !== null) setPageId(null);
-      return;
-    }
-    if (pageId === null || !pages.some((p) => p.id === pageId)) {
-      setPageId(pages[0]?.id ?? null);
-    }
-  }, [pages, pageId]);
-
-  const page = pages.find((p) => p.id === pageId) ?? null;
+  // Derived, not synced by an effect. An effect used to write the first page
+  // into `pageId` after the render that first showed the nav, from that
+  // render's closure — so a click landing before the effect flushed was
+  // overwritten: "Impressum" clicked, "Startseite" still pressed (seen in CI).
+  const page = pages.find((p) => p.id === pageId) ?? pages[0] ?? null;
 
   const isMachine = (key: string, l: string): boolean =>
     Boolean(blocks.find((b) => b.section_key === key && b.lang === l)?.machine_translated);
@@ -440,8 +434,8 @@ function SiteEditor({ site }: { site: Site }) {
               <button
                 key={p.id}
                 type="button"
-                className={p.id === pageId ? "chip chip--info" : "chip chip--neutral"}
-                aria-pressed={p.id === pageId}
+                className={p.id === page?.id ? "chip chip--info" : "chip chip--neutral"}
+                aria-pressed={p.id === page?.id}
                 onClick={() => {
                   setPageId(p.id);
                   setSectionKey(null);
