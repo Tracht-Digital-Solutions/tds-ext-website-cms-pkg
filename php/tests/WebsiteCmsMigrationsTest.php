@@ -106,29 +106,46 @@ final class WebsiteCmsMigrationsTest extends TestCase
     }
 
     /**
-     * The seeded legal texts must announce themselves as drafts.
+     * No migration may reach for an adapter method outside Phinx's interface.
      *
-     * They have not been through legal review, and a legal text that reads as
-     * finished is one somebody publishes without reading it. The notice lives
-     * inside the seeded markdown so it travels with a copy-paste into the
-     * editor — removing it has to be a decision, not an accident.
+     * The shop legal seed quoted through `getAdapter()->quoteValue()`, which is
+     * protected on `PdoAdapter` and absent from the `TimedOutputAdapter` a
+     * migration actually receives. It died on every run, and because all modules
+     * share one ledger, it stopped every migration pending behind it — the
+     * shop's tables never reached production. Nothing failed in this repository:
+     * the files were valid PHP, only a real run could tell. Use `execute($sql,
+     * $params)` or the table API instead.
      */
-    public function testTheSeededLegalTextsAreMarkedAsDrafts(): void
+    public function testNoMigrationCallsAnAdapterInternal(): void
+    {
+        $problems = [];
+        foreach (self::files() as $file) {
+            // Code only: the retired seed's docblock names the call it used.
+            if (preg_match('/->\s*quoteValue\s*\(/', php_strip_whitespace($file)) === 1) {
+                $problems[] = basename($file);
+            }
+        }
+        self::assertSame([], $problems, 'quoteValue() ist in einer Migration nicht aufrufbar');
+    }
+
+    /**
+     * The retired shop legal seed stays in place, and stays empty.
+     *
+     * Kept so its version is recorded and forgotten rather than reported as
+     * missing. Empty because running it now would push early drafts into
+     * `cms_block`, which the shop reads before its committed legal texts — a
+     * live legal page replaced as a side effect of a schema run.
+     */
+    public function testTheRetiredShopLegalSeedWritesNothing(): void
     {
         $seed = null;
         foreach (self::files() as $file) {
-            if (str_contains($file, 'seed_shop_legal')) {
-                $seed = (string) file_get_contents($file);
+            if (str_contains($file, '20260727000007_website_cms_seed_shop_legal')) {
+                $seed = php_strip_whitespace($file);
             }
         }
-        self::assertNotNull($seed, 'Seed-Migration nicht gefunden');
-        self::assertStringContainsString('Entwurf — noch nicht geprüft', $seed);
-        self::assertStringContainsString('Draft — not reviewed', $seed);
-
-        // Insert-only. A seed that overwrote would discard whatever the
-        // operator edited the last time the ledger was rebuilt — and being
-        // edited is the entire point of these rows.
-        self::assertStringContainsString('ON DUPLICATE KEY UPDATE id = id', $seed);
-        self::assertStringNotContainsString('ON DUPLICATE KEY UPDATE value_json', $seed);
+        self::assertNotNull($seed, 'Die stillgelegte Seed-Migration muss erhalten bleiben');
+        self::assertDoesNotMatchRegularExpression('/->\s*(execute|query|insert|table)\s*\(/', $seed);
+        self::assertDoesNotMatchRegularExpression('/\b(INSERT|UPDATE|DELETE)\b/', $seed);
     }
 }
