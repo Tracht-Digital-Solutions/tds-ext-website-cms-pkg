@@ -67,18 +67,10 @@ export default function SitesList() {
     sitesQuery.stale || (sitesQuery.error !== null && sitesQuery.data !== undefined);
 
   // Follow the registry: a site that disappears (or the very first one to
-  // arrive) must not leave the screen pointing at nothing.
-  useEffect(() => {
-    if (sites.length === 0) {
-      if (selectedKey !== null) setSelectedKey(null);
-      return;
-    }
-    if (selectedKey === null || !sites.some((s) => s.site_key === selectedKey)) {
-      setSelectedKey(sites[0]?.site_key ?? null);
-    }
-  }, [sites, selectedKey]);
-
-  const selected = sites.find((s) => s.site_key === selectedKey) ?? null;
+  // arrive) must not leave the screen pointing at nothing. Derived, not written
+  // back by an effect: the effect's stale closure overwrote a click that landed
+  // before it ran.
+  const selected = sites.find((s) => s.site_key === selectedKey) ?? sites[0] ?? null;
 
   if (sitesQuery.loading) {
     return (
@@ -131,8 +123,8 @@ export default function SitesList() {
             <button
               key={s.id}
               type="button"
-              className={s.site_key === selectedKey ? "chip chip--info" : "chip chip--neutral"}
-              aria-pressed={s.site_key === selectedKey}
+              className={s.site_key === selected?.site_key ? "chip chip--info" : "chip chip--neutral"}
+              aria-pressed={s.site_key === selected?.site_key}
               onClick={() => setSelectedKey(s.site_key)}
             >
               {s.name}
