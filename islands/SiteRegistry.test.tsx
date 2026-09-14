@@ -15,7 +15,7 @@ import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
  * truthful cache outcomes.
  */
 
-type Hit = { status?: number; body?: unknown };
+type Hit = { status?: number; body?: unknown; unreachable?: boolean };
 let handlers: Array<(url: string, init?: RequestInit) => Hit | undefined> = [];
 let calls: Array<{ url: string; method: string; body: unknown }> = [];
 
@@ -26,6 +26,15 @@ function respond(match: RegExp, body: unknown, status = 200, method?: string) {
     if (!match.test(pathOf(url))) return undefined;
     if (method && (init?.method ?? "GET") !== method) return undefined;
     return { status, body };
+  });
+}
+
+/** A request that never reaches the API: fetch itself rejects, as it does offline. */
+function unreachable(match: RegExp, method?: string) {
+  handlers.unshift((url, init) => {
+    if (!match.test(pathOf(url))) return undefined;
+    if (method && (init?.method ?? "GET") !== method) return undefined;
+    return { unreachable: true };
   });
 }
 
@@ -52,6 +61,7 @@ beforeEach(() => {
       for (const h of handlers) {
         const hit = h(url, init);
         if (hit) {
+          if (hit.unreachable) throw new TypeError("Failed to fetch");
           const status = hit.status ?? 200;
           return { ok: status >= 200 && status < 300, status, json: async () => hit.body ?? {} } as Response;
         }
@@ -235,6 +245,19 @@ describe("per-site API connection", () => {
     const u = await renderRegistry();
     await u.click(await screen.findByRole("button", { name: "Seiten-Cache neu bauen" }));
     expect(await screen.findByText(/noch nicht vollständig mit der API verbunden/)).toBeTruthy();
+  });
+
+  it("keeps the connection when the disconnect never reaches the API", async () => {
+    // fetch rejects offline; unhandled, the click did nothing and said nothing.
+    respond(/\/cms\/sites$/, { sites: [SITE] }, 200, "GET");
+    respond(/\/blogs$/, { blogs: [] }, 200, "GET");
+    respond(/\/cms\/sites\/landing\/connection$/, { connection: { origin: "https://site.example", status: "connected" } }, 200, "GET");
+    unreachable(/\/cms\/sites\/landing\/connection$/, "DELETE");
+    render(<SiteRegistry />);
+    const u = user();
+    await u.click(await screen.findByRole("button", { name: "Verbindung trennen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
+    expect(screen.getByText("Verbunden mit https://site.example")).toBeTruthy();
   });
 });
 

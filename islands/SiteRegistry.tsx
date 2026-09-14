@@ -249,7 +249,15 @@ function SiteCard({ site, blogs }: { site: Site; blogs: BlogCandidate[] }) {
   };
 
   const disconnect = async () => {
-    const res = await api(`/cms/sites/${site.site_key}/connection`, { method: "DELETE" });
+    let res: Response;
+    try {
+      res = await api(`/cms/sites/${site.site_key}/connection`, { method: "DELETE" });
+    } catch {
+      // apiFetch rejects when the request never reaches the API; uncaught, the
+      // click did nothing and said nothing.
+      toast.danger("Trennen fehlgeschlagen (Netzwerkfehler).");
+      return;
+    }
     if (res.ok) {
       setConnection(null);
       setInstallUrl(null);
