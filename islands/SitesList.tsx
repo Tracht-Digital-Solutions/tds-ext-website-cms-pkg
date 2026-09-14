@@ -472,7 +472,7 @@ function SiteEditor({ site }: { site: Site }) {
       <LegalDocs siteKey={site.site_key} />
 
       <div className="cms-editor__translate">
-        <h3>Automatische Übersetzung</h3>
+        <h2>Automatische Übersetzung</h2>
         <p className="marginalia">
           Beim Speichern eines Abschnitts wird die Gegensprache per DeepL erzeugt (Schlüssel
           unter Einstellungen → Website-CMS). Vorhandene Abschnitte lassen sich hier nachziehen.
@@ -511,7 +511,9 @@ function PageSections({
   return (
     <div className={staleClass(stale, "tds-card tds-stack")} aria-busy={stale}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h3>{page.label}</h3>
+        {/* h2, like every section heading in this editor: the page's h1 is
+            "Website-CMS" and there is no level in between. */}
+        <h2>{page.label}</h2>
         {/* Public paths, so nobody has to guess which localized page they are
             editing. Blank for the leftovers bucket, which is not a page. */}
         {page.path ? (
@@ -682,9 +684,9 @@ function BlockEditor({
   return (
     <div className="tds-card tds-stack">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3>
+        <h2>
           {sectionLabel(sectionKey)} <code className="text-xs opacity-70">{sectionKey}</code>
-        </h3>
+        </h2>
         <span className="flex flex-wrap items-center gap-2">
           <select
             className="field-boxed"
