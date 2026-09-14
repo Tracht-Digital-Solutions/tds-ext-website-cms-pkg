@@ -21,14 +21,16 @@ import SiteRegistry from "./SiteRegistry.tsx";
 // the reason the user navigated.
 ---
 
+{/* No section heading of its own: the Einstellungen host renders this
+    section's `label` as the h2 directly above, and an h3 here repeated it
+    verbatim. "Websites" is therefore the first level below it, an h3. */}
 <div class="tds-settings-section__body">
-  <h3>Website-CMS</h3>
   <WebsiteSettings client:visible />
 
-  <h4>Websites</h4>
+  <h3>Websites</h3>
   <p class="marginalia">
-    Hier werden Websites hinzugefügt. Die Inhalte selbst werden unter
-    <a class="link-underline" href="/website">Website-CMS</a> bearbeitet — dort wird
+    Hier werden Websites hinzugefügt. Die Inhalte selbst werden
+    unter <a class="link-underline" href="/website">Website-CMS</a> bearbeitet — dort wird
     pro Seite ausgewählt, was geändert werden soll.
   </p>
   <SiteRegistry client:visible />
