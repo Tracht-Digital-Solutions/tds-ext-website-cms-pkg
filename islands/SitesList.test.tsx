@@ -242,7 +242,12 @@ describe("editing a section", () => {
     respond(/\/cms\/landing\/blocks\/home_hero\?/, { value, lang: "de" });
     const u = await open([block("home_hero")]);
     await u.click(await screen.findByRole("button", { name: /^DE$/ }));
-    await screen.findByRole("button", { name: "Speichern" });
+    // Ready means LOADED, not merely mounted: "Speichern" exists (disabled)
+    // before the block arrives, and typing into the form before that lets the
+    // late seed write the old value back into the field. The editor also
+    // cross-fades in (Presence), which is what exposed the race.
+    const save = await screen.findByRole("button", { name: "Speichern" });
+    await waitFor(() => expect((save as HTMLButtonElement).disabled).toBe(false));
     return u;
   }
 
@@ -335,12 +340,23 @@ describe("editing a section", () => {
     });
     const u = await open([block("service_consulting")]);
     await u.click(screen.getByRole("button", { name: "Leistung: Beratung & Konzeption" }));
-    const row = (await screen.findByText("service_consulting")).closest("li")!;
+    // The page's section list cross-fades (Presence): the outgoing list may
+    // still be on screen, aria-hidden. Take the row from the one that is live.
+    const row = await waitFor(() => {
+      const live = screen
+        .getAllByText("service_consulting")
+        .map((el) => el.closest("li"))
+        .find((li) => li && !li.closest('[aria-hidden="true"]'));
+      if (!live) throw new Error("section list not swapped in yet");
+      return live;
+    });
     await u.click(within(row).getByRole("button", { name: /^DE$/ }));
 
     expect(await screen.findByText("Veröffentlichte Referenzen")).toBeTruthy();
     expect(screen.getByRole("button", { name: "+ Referenz" })).toBeTruthy();
-    await u.click(screen.getByRole("button", { name: "Speichern" }));
+    const save = screen.getByRole("button", { name: "Speichern" }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    await u.click(save);
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0]?.body).toMatchObject({
       value: { title: "Beratung & Konzeption", references: [] },

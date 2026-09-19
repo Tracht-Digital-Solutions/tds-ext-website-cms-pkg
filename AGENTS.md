@@ -29,6 +29,16 @@ Website-CMS extension, ported from `tds-content-api`'s content-block model. Read
 
 ## Gotchas
 
+- **Motion comes from `tds-shared/motion/react` (peer `>=0.38.2`).** Site and
+  page chips carry a `TabIndicator`; a page's section list and the block
+  editor cross-fade with `Presence` (keyed by page and by SECTION — a language
+  switch inside one section keeps the editor, as before); status lines open
+  with `Collapse`. The site editor is deliberately NOT re-keyed per site: its
+  state has always survived a site switch. In tests, "ready" means the
+  editor's "Speichern" is ENABLED (data loaded), not merely present, and a row
+  must be taken from the list that is not `aria-hidden` (the outgoing one may
+  still be fading).
+
 - **Never guard a container binding with `!$c->has(X::class)` — saving a content
   block 500'd for months because of it.** PHP-DI answers `has()` out of its
   definition sources, and *autowiring is one of them*: for any concrete,

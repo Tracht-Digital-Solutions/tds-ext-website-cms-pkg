@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { Collapse, Presence, TabIndicator } from "@tracht-digital-solutions/tds-shared/motion/react";
 import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 import LegalDocs from "./LegalDocs.tsx";
@@ -123,11 +124,12 @@ export default function SitesList() {
             <button
               key={s.id}
               type="button"
-              className={s.site_key === selected?.site_key ? "chip chip--info" : "chip chip--neutral"}
+              className={s.site_key === selected?.site_key ? "chip tds-tab chip--info" : "chip tds-tab chip--neutral"}
               aria-pressed={s.site_key === selected?.site_key}
               onClick={() => setSelectedKey(s.site_key)}
             >
               {s.name}
+              {s.site_key === selected?.site_key ? <TabIndicator group="cms-site" /> : null}
             </button>
           ))}
         </div>
@@ -426,7 +428,7 @@ function SiteEditor({ site }: { site: Site }) {
               <button
                 key={p.id}
                 type="button"
-                className={p.id === page?.id ? "chip chip--info" : "chip chip--neutral"}
+                className={p.id === page?.id ? "chip tds-tab chip--info" : "chip tds-tab chip--neutral"}
                 aria-pressed={p.id === page?.id}
                 onClick={() => {
                   setPageId(p.id);
@@ -434,36 +436,41 @@ function SiteEditor({ site }: { site: Site }) {
                 }}
               >
                 {p.label}
+                {p.id === page?.id ? <TabIndicator group="cms-page" /> : null}
               </button>
             ))}
           </nav>
 
           {page ? (
-            <PageSections
-              page={page}
-              stale={blocksVisiblyStale}
-              activeSection={sectionKey}
-              activeLang={lang}
-              isMachine={isMachine}
-              isStored={isStored}
-              onPick={(key, l) => {
-                setSectionKey(key);
-                setLang(l);
-              }}
-            />
+            <Presence view={page.id}>
+              <PageSections
+                page={page}
+                stale={blocksVisiblyStale}
+                activeSection={sectionKey}
+                activeLang={lang}
+                isMachine={isMachine}
+                isStored={isStored}
+                onPick={(key, l) => {
+                  setSectionKey(key);
+                  setLang(l);
+                }}
+              />
+            </Presence>
           ) : null}
 
-          {page && sectionKey ? (
-            <BlockEditor
-              siteKey={site.site_key}
-              sectionKey={sectionKey}
-              lang={lang}
-              onLangChange={setLang}
-              cacheConfigured={Boolean((site.cache_url ?? "").trim())}
-            />
-          ) : (
-            <p className="marginalia">Einen Abschnitt wählen, um ihn zu bearbeiten.</p>
-          )}
+          <Presence view={page && sectionKey ? `section-${sectionKey}` : "none"}>
+            {page && sectionKey ? (
+              <BlockEditor
+                siteKey={site.site_key}
+                sectionKey={sectionKey}
+                lang={lang}
+                onLangChange={setLang}
+                cacheConfigured={Boolean((site.cache_url ?? "").trim())}
+              />
+            ) : (
+              <p className="marginalia">Einen Abschnitt wählen, um ihn zu bearbeiten.</p>
+            )}
+          </Presence>
         </>
       )}
 
@@ -477,11 +484,11 @@ function SiteEditor({ site }: { site: Site }) {
           Beim Speichern eines Abschnitts wird die Gegensprache per DeepL erzeugt (Schlüssel
           unter Einstellungen → Website-CMS). Vorhandene Abschnitte lassen sich hier nachziehen.
         </p>
-        {backfillStatus ? (
+        <Collapse open={Boolean(backfillStatus)}>
           <p className="tds-alert" role="status">
             {backfillStatus}
           </p>
-        ) : null}
+        </Collapse>
         <button className="btn btn-primary" type="button" onClick={backfill}>
           Übersetzungen nachziehen
         </button>
@@ -752,11 +759,11 @@ function BlockEditor({
         </p>
       ) : null}
       {/* Validation only here — outcomes are toasts. */}
-      {status ? (
+      <Collapse open={Boolean(status)}>
         <p className="tds-alert tds-alert--danger" role="alert">
           {status}
         </p>
-      ) : null}
+      </Collapse>
 
       <div className="flex flex-wrap items-center gap-2">
         <button
