@@ -290,6 +290,12 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "email", label: "E-Mail", type: "text" },
     { key: "phone", label: "Telefon", type: "text" },
     { key: "location", label: "Ort", type: "text" },
+    // Die Auswahl im Anliegen-Dropdown des Formulars. Der gewählte Eintrag
+    // wird als Betreff der Anfrage gespeichert, ist also im Panel sicht- und
+    // durchsuchbar. Der Schlüssel heißt bewusst `reasons`: `kind`, `id` und
+    // `variant` stehen auf der SKIP_KEYS-Liste des Übersetzungs-Walkers und
+    // kämen nie auf Englisch an.
+    { key: "reasons", label: "Anliegen (Auswahl im Formular)", type: "stringlist", itemLabel: "Anliegen" },
   ],
   process: [
     { key: "label", label: "Label", type: "text" },
@@ -386,6 +392,20 @@ export const SECTION_SCHEMAS: Record<string, Field[]> = {
     { key: "rateProcess", label: "Prozessoptimierung – Stundensatz (€)", type: "number" },
     { key: "rateSolutions", label: "Individuelle Lösungen – Stundensatz (€)", type: "number" },
     { key: "rateWebPresence", label: "Webauftritt – Stundensatz (€)", type: "number" },
+    // Feste Preise neben den Stundensätzen. Leer lassen heißt: der Block
+    // erscheint auf der Seite nicht — es wird nichts Halbfertiges gezeigt.
+    {
+      key: "packages",
+      label: "Festpreis-Pakete",
+      type: "list",
+      itemLabel: "Paket",
+      itemFields: [
+        { key: "title", label: "Titel", type: "text" },
+        { key: "price", label: "Preis (€)", type: "number" },
+        { key: "description", label: "Beschreibung", type: "textarea" },
+        { key: "includes", label: "Enthalten", type: "stringlist", itemLabel: "Punkt" },
+      ],
+    },
     { key: "notes", label: "Hinweise", type: "stringlist", itemLabel: "Hinweis" },
     { key: "ctaTitle", label: "CTA-Titel", type: "text" },
     { key: "ctaSub", label: "CTA-Untertext", type: "textarea" },

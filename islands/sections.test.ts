@@ -234,11 +234,37 @@ describe("section metadata", () => {
       "rateProcess",
       "rateSolutions",
       "rateWebPresence",
+      "packages",
       "notes",
       "ctaTitle",
       "ctaSub",
       "ctaButton",
     ]);
     expect(SECTION_SCHEMAS.pricing_services?.some((field) => field.key === "items")).toBe(false);
+  });
+
+  it("lets the fixed-price packages be edited item by item", () => {
+    const packages = SECTION_SCHEMAS.pricing_services?.find((field) => field.key === "packages");
+    expect(packages?.type).toBe("list");
+    const itemFields = packages && "itemFields" in packages ? packages.itemFields : [];
+    expect(itemFields.map((field) => field.key)).toEqual([
+      "title",
+      "price",
+      "description",
+      "includes",
+    ]);
+    // A price is a number, not prose: the site renders it as currency and puts
+    // it into structured data.
+    expect(itemFields.find((field) => field.key === "price")?.type).toBe("number");
+    expect(itemFields.find((field) => field.key === "includes")?.type).toBe("stringlist");
+  });
+
+  it("offers the contact reasons as an editable list", () => {
+    const reasons = SECTION_SCHEMAS.contact?.find((field) => field.key === "reasons");
+    expect(reasons?.type).toBe("stringlist");
+    // Named `reasons` on purpose. TranslatableJsonWalker skips `kind`, `id`,
+    // `variant` and friends, so a reason list under one of those names would
+    // never reach the English block.
+    expect(["kind", "id", "variant", "slug"]).not.toContain(reasons?.key);
   });
 });
