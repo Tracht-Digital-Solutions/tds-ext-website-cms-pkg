@@ -88,15 +88,15 @@ describe("dependency hygiene", () => {
     expect(range, "a file:/link: range never resolves for a consumer").not.toMatch(/^(file:|link:)/);
   });
 
-  it("stays inside the 0.4.x line the host pins with a caret", () => {
-    // The host pins this extension with `^0.4.0`
+  it("stays inside the 0.5.x line the host pins with a caret", () => {
+    // The host pins this extension with `^0.5.0`
     // (tds-admin-frontend/package.json); under 0.x a caret means
-    // `>=0.4.0 <0.5.0`, so a 0.5.0 here would silently stop reaching it —
+    // `>=0.5.0 <0.6.0`, so a 0.6.0 here would silently stop reaching it —
     // the panel would keep building against the previous minor and a new
     // section would simply never appear. Repin the host first, then this.
-    // (It said 0.3.x until the host moved to 0.4 — the release that crossed
-    // the line bumped after its own tests had run.)
-    expect(pkg.version).toMatch(/^0\.4\./);
+    // (It said 0.4.x until the host moved to 0.5 — and was red on every push
+    // from the 0.5.0 release until this line was moved with it.)
+    expect(pkg.version).toMatch(/^0\.5\./);
   });
 
   it("exposes the scripts CI runs", () => {
