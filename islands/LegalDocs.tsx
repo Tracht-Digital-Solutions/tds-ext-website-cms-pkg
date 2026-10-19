@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
-import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { useState } from "react";
+import { Alert, ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import { apiFetch, apiUrl } from "@tracht-digital-solutions/tds-shared/api";
+import { FileDropZone } from "@tracht-digital-solutions/tds-shared/dropzone";
+import { formatBytes } from "@tracht-digital-solutions/tds-shared/format";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 
 export interface LegalDoc {
@@ -12,15 +14,10 @@ export interface LegalDoc {
   updatedAt: string;
 }
 
-const api = apiFetch;
-
 /** The documents a site is expected to carry, so the editor is not a blank slate. */
 const KNOWN_KEYS: { key: string; label: string }[] = [{ key: "agb", label: "AGB" }];
 
 const LANGS = ["de", "en"] as const;
-
-const formatSize = (bytes: number): string =>
-  bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 /**
  * Legal-document manager for one site — the upload surface behind the
@@ -41,10 +38,13 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
   const [versionLabel, setVersionLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  // Remounting the zone clears the picked file's name after an upload.
+  const [zoneKey, setZoneKey] = useState(0);
+  const [pendingRemove, setPendingRemove] = useState<LegalDoc | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const upload = async () => {
-    const file = fileRef.current?.files?.[0];
     if (!file) {
       setError("Bitte eine PDF-Datei auswählen.");
       return;
@@ -62,7 +62,7 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
     body.append("version_label", versionLabel.trim());
     let res: Response;
     try {
-      res = await api(`/cms/sites/${siteKey}/legal/${docKey}`, { method: "POST", body });
+      res = await apiFetch(`/cms/sites/${siteKey}/legal/${docKey}`, { method: "POST", body });
     } catch {
       setBusy(false);
       toast.danger("Upload fehlgeschlagen (Netzwerkfehler).");
@@ -70,7 +70,8 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
     }
     setBusy(false);
     if (res.ok) {
-      if (fileRef.current) fileRef.current.value = "";
+      setFile(null);
+      setZoneKey((k) => k + 1);
       const result = (await res.json().catch(() => ({}))) as { cached?: boolean };
       toast.success(
         result.cached === true
@@ -89,11 +90,15 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
 
   const remove = async (doc: LegalDoc) => {
     let res: Response;
+    setRemoving(true);
     try {
-      res = await api(`/cms/sites/${siteKey}/legal/${doc.docKey}?lang=${doc.lang}`, { method: "DELETE" });
+      res = await apiFetch(`/cms/sites/${siteKey}/legal/${doc.docKey}?lang=${doc.lang}`, { method: "DELETE" });
     } catch {
       toast.danger("Entfernen fehlgeschlagen (Netzwerkfehler).");
       return;
+    } finally {
+      setRemoving(false);
+      setPendingRemove(null);
     }
     if (res.ok) {
       const result = (await res.json().catch(() => ({}))) as { cached?: boolean };
@@ -118,10 +123,10 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
       </p>
 
       {docsQuery.error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Dokumente konnten nicht aktualisiert werden ({docsQuery.error.message}).
           {docs.length > 0 ? " Die angezeigten Daten sind möglicherweise veraltet." : ""}
-        </p>
+        </Alert>
       ) : null}
 
       {docsQuery.loading ? (
@@ -158,7 +163,7 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
                   <span className="chip chip--neutral">{d.lang}</span>
                 </td>
                 <td>
-                  {d.filename} <span className="marginalia">({formatSize(d.sizeBytes)})</span>
+                  {d.filename} <span className="marginalia">({formatBytes(d.sizeBytes)})</span>
                 </td>
                 <td>{d.versionLabel ?? "—"}</td>
                 <td>
@@ -175,7 +180,7 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
                     >
                       Ansehen
                     </a>
-                    <button className="btn btn-ghost" type="button" onClick={() => remove(d)}>
+                    <button className="btn btn-ghost" type="button" onClick={() => setPendingRemove(d)}>
                       Entfernen
                     </button>
                   </div>
@@ -232,16 +237,38 @@ export default function LegalDocs({ siteKey }: { siteKey: string }) {
             />
           </label>
         </div>
-        <input ref={fileRef} type="file" accept="application/pdf,.pdf" aria-label="PDF-Datei" />
+        <FileDropZone
+          key={zoneKey}
+          label="PDF-Datei"
+          hint="oder hierher ziehen · max. 8 MB"
+          activeLabel="Loslassen zum Hinzufügen"
+          accept="application/pdf,.pdf"
+          disabled={busy}
+          onFiles={(files) => {
+            setFile(files[0] ?? null);
+            setError(null);
+          }}
+          onReject={() => setError("Nur PDF-Dateien werden akzeptiert.")}
+        />
         {error ? (
-          <p className="tds-alert tds-alert--danger" role="alert">
+          <Alert>
             {error}
-          </p>
+          </Alert>
         ) : null}
         <button className="btn btn-primary" type="submit" disabled={busy}>
           {busy ? <Spinner size="sm" /> : "Hochladen"}
         </button>
       </form>
+
+      <ConfirmDialog
+        open={pendingRemove !== null}
+        title="Dokument entfernen?"
+        message={pendingRemove ? `„${pendingRemove.filename}" (${pendingRemove.lang}) verschwindet von der öffentlichen Website.` : null}
+        confirmLabel="Entfernen"
+        busy={removing}
+        onConfirm={() => pendingRemove && void remove(pendingRemove)}
+        onCancel={() => setPendingRemove(null)}
+      />
     </div>
   );
 }

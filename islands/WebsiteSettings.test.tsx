@@ -151,7 +151,7 @@ describe("loading", () => {
   it("reports any other failure with its status", async () => {
     getResponse = { status: 500, body: {} };
     await renderSettings();
-    expect(await screen.findByText("Fehler (HTTP 500).")).toBeTruthy();
+    expect(await screen.findByText("Einstellungen konnten nicht geladen werden (HTTP 500).")).toBeTruthy();
   });
 
   it("leaves the loading branch even when the request fails", async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { Alert, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
 import { Collapse, Presence, TabIndicator } from "@tracht-digital-solutions/tds-shared/motion/react";
-import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import { apiFetch, sendJson } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 import LegalDocs from "./LegalDocs.tsx";
 import {
@@ -35,8 +35,6 @@ interface BlockMeta {
   machine_translated?: number | boolean;
   updated_at: string;
 }
-
-const api = apiFetch;
 
 /**
  * Website-CMS — the CONTENT screen: pick a website, pick a page, edit its
@@ -83,9 +81,9 @@ export default function SitesList() {
 
   if (sitesQuery.error && sites.length === 0) {
     return (
-      <p className="tds-alert tds-alert--danger" role="alert">
+      <Alert>
         Websites konnten nicht geladen werden ({sitesQuery.error.message}).
-      </p>
+      </Alert>
     );
   }
 
@@ -107,10 +105,10 @@ export default function SitesList() {
       aria-busy={sitesVisiblyStale}
     >
       {sitesQuery.error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Websites konnten nicht aktualisiert werden ({sitesQuery.error.message}). Die angezeigten
           Daten sind möglicherweise veraltet.
-        </p>
+        </Alert>
       ) : null}
       {/* One site is the overwhelmingly common case, so the picker only earns
           its space when there is a choice to make. */}
@@ -216,11 +214,13 @@ function StringListEditor({
           <input
             className="field-boxed"
             value={s}
+            aria-label={`${field.itemLabel} ${i + 1}`}
             onChange={(e) => onChange(items.map((v, idx) => (idx === i ? e.target.value : v)))}
           />
           <button
             type="button"
             className="btn btn-danger text-xs"
+            aria-label={`${field.itemLabel} ${i + 1} entfernen`}
             onClick={() => onChange(items.filter((_, idx) => idx !== i))}
           >
             ×
@@ -368,7 +368,7 @@ function SiteEditor({ site }: { site: Site }) {
     setBackfillStatus("Übersetzungen werden erzeugt …");
     let res: Response;
     try {
-      res = await api(`/cms/sites/${site.site_key}/translations/backfill`, { method: "POST" });
+      res = await apiFetch(`/cms/sites/${site.site_key}/translations/backfill`, { method: "POST" });
     } catch {
       setBackfillStatus(null);
       toast.danger("Übersetzungslauf fehlgeschlagen (Netzwerkfehler).");
@@ -401,10 +401,10 @@ function SiteEditor({ site }: { site: Site }) {
   return (
     <div className="cms-editor tds-stack">
       {blocksQuery.error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Inhalte konnten nicht aktualisiert werden ({blocksQuery.error.message}).
           {blocks.length > 0 ? " Die angezeigten Daten sind möglicherweise veraltet." : ""}
-        </p>
+        </Alert>
       ) : null}
 
       {blocksQuery.loading ? (
@@ -414,10 +414,10 @@ function SiteEditor({ site }: { site: Site }) {
       ) : (
         <>
           {blocks.length === 0 && !blocksQuery.error ? (
-            <p className="tds-alert">
+            <Alert tone="neutral">
               Noch keine eigenen Inhalte gespeichert. Die öffentliche Website verwendet ihre
               eingebauten Vorgaben; jeder Abschnitt kann hier erstmals angelegt werden.
-            </p>
+            </Alert>
           ) : null}
           <nav
             className={staleClass(blocksVisiblyStale, "tds-toolbar")}
@@ -485,9 +485,9 @@ function SiteEditor({ site }: { site: Site }) {
           unter Einstellungen → Website-CMS). Vorhandene Abschnitte lassen sich hier nachziehen.
         </p>
         <Collapse open={Boolean(backfillStatus)}>
-          <p className="tds-alert" role="status">
+          <Alert tone="neutral">
             {backfillStatus}
-          </p>
+          </Alert>
         </Collapse>
         <button className="btn btn-primary" type="button" onClick={backfill}>
           Übersetzungen nachziehen
@@ -650,11 +650,7 @@ function BlockEditor({
     setBusy(true);
     let res: Response;
     try {
-      res = await api(`/cms/${siteKey}/blocks/${sectionKey}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: v, lang }),
-      });
+      res = await sendJson(`/cms/${siteKey}/blocks/${sectionKey}`, "PUT", { value: v, lang });
     } catch {
       setBusy(false);
       toast.danger("Speichern fehlgeschlagen (Netzwerkfehler). Der Inhalt wurde nicht bestätigt.");
@@ -754,15 +750,15 @@ function BlockEditor({
       )}
 
       {blockQuery.error ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Abschnitt konnte nicht geladen werden ({blockQuery.error.message}).
-        </p>
+        </Alert>
       ) : null}
       {/* Validation only here — outcomes are toasts. */}
       <Collapse open={Boolean(status)}>
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           {status}
-        </p>
+        </Alert>
       </Collapse>
 
       <div className="flex flex-wrap items-center gap-2">

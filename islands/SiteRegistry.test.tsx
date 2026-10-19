@@ -220,7 +220,7 @@ describe("per-site API connection", () => {
     await u.type(await screen.findByLabelText("Adresse der öffentlichen Website"), "https://site.example");
     await u.click(screen.getByRole("button", { name: "Mit API verbinden" }));
     expect(await screen.findByText(
-      "Die Website hat die Verbindung nicht direkt angenommen (HTTP 422: invalid_origin). Öffnen Sie den Einrichtungslink auf dem Website-Server.",
+      "Die Website hat die Verbindung nicht direkt angenommen (HTTP 422: invalid_origin). Öffnen Sie den Einrichtungslink auf dem Server.",
     )).toBeTruthy();
   });
 
@@ -256,7 +256,9 @@ describe("per-site API connection", () => {
     render(<SiteRegistry />);
     const u = user();
     await u.click(await screen.findByRole("button", { name: "Verbindung trennen" }));
-    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("Netzwerkfehler"))).toBe(true));
+    // A disconnect is confirmed first (tds-shared ConfirmDialog).
+    await u.click(await screen.findByRole("button", { name: "Trennen" }));
+    await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && t.message.includes("die API ist nicht erreichbar"))).toBe(true));
     expect(screen.getByText("Verbunden mit https://site.example")).toBeTruthy();
   });
 });

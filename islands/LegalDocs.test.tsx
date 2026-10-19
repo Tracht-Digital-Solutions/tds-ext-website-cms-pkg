@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { primeRuntimeConfig } from "@tracht-digital-solutions/tds-shared/api";
 import { resetCache } from "@tracht-digital-solutions/tds-shared/data";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import LegalDocs from "./LegalDocs";
 import { TOAST_EVENT } from "@tracht-digital-solutions/tds-shared/toast";
@@ -92,6 +92,11 @@ async function pick(u: ReturnType<typeof user>, file = pdf()) {
 
 const uploadCall = () => calls.find((c) => c.method === "POST");
 
+/** A removal goes through tds-shared ConfirmDialog first. */
+async function confirmRemove(u: ReturnType<typeof user>) {
+  await u.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Entfernen" }));
+}
+
 // apiFetch consults the host-side runtime config (/tds-runtime.json) before it
 // resolves a URL, so without this the first entry in fetch.mock.calls is that
 // probe rather than the endpoint under test. The panel products never ship the
@@ -118,7 +123,7 @@ describe("listing", () => {
     await renderDocs([DOC]);
     expect(await screen.findByText("agb")).toBeTruthy();
     expect(screen.getByText(/AGB_2026\.pdf/)).toBeTruthy();
-    expect(screen.getByText(/90 KB/)).toBeTruthy();
+    expect(screen.getByText(/90,0 KB/)).toBeTruthy();
     expect(screen.getByText("Stand: 09/2025")).toBeTruthy();
   });
 
@@ -243,16 +248,28 @@ describe("delete", () => {
   it("deletes the right language and reloads", async () => {
     await renderDocs([DOC, { ...DOC, lang: "en" }]);
     respond(/\/legal\/agb\?lang=en$/, { ok: true }, 200, "DELETE");
-    await user().click((await screen.findAllByRole("button", { name: "Entfernen" }))[1]!);
+    const u = user();
+    await u.click((await screen.findAllByRole("button", { name: "Entfernen" }))[1]!);
+    await confirmRemove(u);
 
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
     expect(pathOf(calls.find((c) => c.method === "DELETE")!.url)).toBe("/cms/sites/landing/legal/agb?lang=en");
   });
 
+  it("asks first, and declining sends nothing", async () => {
+    await renderDocs([DOC]);
+    const u = user();
+    await u.click(await screen.findByRole("button", { name: "Entfernen" }));
+    await u.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Abbrechen" }));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+  });
+
   it("toasts a failed delete with its status and does not claim success", async () => {
     await renderDocs([DOC]);
     respond(/\/legal\/agb\?lang=de$/, { error: "no" }, 500, "DELETE");
-    await user().click(await screen.findByRole("button", { name: "Entfernen" }));
+    const u = user();
+    await u.click(await screen.findByRole("button", { name: "Entfernen" }));
+    await confirmRemove(u);
 
     await waitFor(() => expect(toasts.some((t) => t.variant === "danger" && /500/.test(t.message))).toBe(true));
     expect(toasts.some((t) => t.variant === "success")).toBe(false);

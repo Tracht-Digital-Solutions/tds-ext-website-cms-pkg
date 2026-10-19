@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
-import { apiFetch } from "@tracht-digital-solutions/tds-shared/api";
+import { Alert, ConfirmDialog, Spinner, toast } from "@tracht-digital-solutions/tds-shared/components";
+import { usePairing } from "@tracht-digital-solutions/tds-shared/admin";
+import { apiFetch, sendJson } from "@tracht-digital-solutions/tds-shared/api";
 import { invalidate, staleClass, useCachedJson } from "@tracht-digital-solutions/tds-shared/data";
 
 interface Site {
@@ -22,8 +23,6 @@ interface BlogCandidate {
   blog_key: string;
   name: string;
 }
-
-const api = apiFetch;
 
 /**
  * The managed-website registry — **this is where a website is added**, and the
@@ -71,11 +70,7 @@ export default function SiteRegistry() {
     setCreating(true);
     let res: Response;
     try {
-      res = await api("/cms/sites", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ site_key: siteKey, name: name.trim() }),
-      });
+      res = await sendJson("/cms/sites", "POST", { site_key: siteKey, name: name.trim() });
     } catch {
       setCreating(false);
       toast.danger("Anlegen fehlgeschlagen (Netzwerkfehler).");
@@ -130,9 +125,9 @@ export default function SiteRegistry() {
         {/* Validation is persistent state and stays in the flow; the outcome of
             the save is a toast. */}
         {formError ? (
-          <p className="tds-alert tds-alert--danger" role="alert">
+          <Alert>
             {formError}
-          </p>
+          </Alert>
         ) : null}
         <button className="btn btn-primary" type="submit" disabled={creating}>
           {creating ? <Spinner size="sm" /> : "Website hinzufügen"}
@@ -140,10 +135,10 @@ export default function SiteRegistry() {
       </form>
 
       {sitesQuery.error && sites.length > 0 ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Websites konnten nicht aktualisiert werden ({sitesQuery.error.message}). Die angezeigten
           Daten sind möglicherweise veraltet.
-        </p>
+        </Alert>
       ) : null}
 
       {sitesQuery.loading ? (
@@ -151,9 +146,9 @@ export default function SiteRegistry() {
           <Spinner />
         </p>
       ) : sitesQuery.error && sites.length === 0 ? (
-        <p className="tds-alert tds-alert--danger" role="alert">
+        <Alert>
           Websites konnten nicht geladen werden ({sitesQuery.error.message}).
-        </p>
+        </Alert>
       ) : sites.length === 0 ? (
         <p className="tds-empty">Noch keine Website verbunden.</p>
       ) : (
@@ -169,131 +164,43 @@ export default function SiteRegistry() {
 
 /** One-click API connection and targeted page-cache refresh for one site. */
 function SiteCard({ site, blogs }: { site: Site; blogs: BlogCandidate[] }) {
-  const [connection, setConnection] = useState<Connection | null>(null);
+  const pairing = usePairing({
+    base: `/cms/sites/${site.site_key}`,
+    profile: "landingpage",
+    subject: "Die Website",
+    rebuildBody: { all: true },
+    rebuildSuccess: "Cache-Neubau für die Website wurde angestoßen.",
+    ambiguousHint: "Bitte eine reine HTTPS-Adresse und bei mehreren Blogs den passenden Blog-Schlüssel angeben.",
+  });
+  const connection = pairing.connection as Connection | null;
   const [origin, setOrigin] = useState("");
   const [blog, setBlog] = useState("");
-  const [candidateKeys, setCandidateKeys] = useState<string[]>(blogs.map((item) => item.blog_key));
-  const [loading, setLoading] = useState(true);
-  const [connecting, setConnecting] = useState(false);
-  const [installUrl, setInstallUrl] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<string | null>(null);
-  const [cacheStatus, setCacheStatus] = useState<string | null>(null);
-
-  const loadConnection = async () => {
-    try {
-      const res = await api(`/cms/sites/${site.site_key}/connection`);
-      if (res.status === 404) {
-        setConnection(null);
-      } else if (res.ok) {
-        const body = await res.json();
-        const next = (body.connection ?? body) as Connection;
-        setConnection(next);
-        setOrigin(next.origin ?? "");
-      } else {
-        setConnectionStatus(`Verbindungsstatus konnte nicht geladen werden (HTTP ${res.status}).`);
-      }
-    } catch {
-      setConnectionStatus("Verbindungsstatus konnte nicht geladen werden (Netzwerkfehler).");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
+  const candidateKeys = pairing.candidates ?? blogs.map((item) => item.blog_key);
 
   useEffect(() => {
-    void loadConnection();
-  }, [site.site_key]);
+    if (connection?.origin) setOrigin(connection.origin);
+  }, [connection?.origin]);
 
   useEffect(() => {
-    const keys = blogs.map((item) => item.blog_key);
-    setCandidateKeys(keys);
-    if (keys.length === 1) setBlog(keys[0]);
+    if (blogs.length === 1) setBlog(blogs[0]!.blog_key);
   }, [blogs]);
 
-  const connect = async () => {
-    setConnecting(true);
-    setConnectionStatus(null);
-    setInstallUrl(null);
-    try {
-      const bindings = blog.trim() === "" ? {} : { blog: blog.trim() };
-      const res = await api(`/cms/sites/${site.site_key}/connection/pairing`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ origin: origin.trim(), profile: "landingpage", bindings }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        if (Array.isArray(body.candidates)) setCandidateKeys(body.candidates.map(String));
-        // The API names the cause (a missing SETTINGS_ENCRYPTION_KEY, a server
-        // fault) — for an operator without log access, the only diagnosis.
-        const reason = typeof body.error === "string" && body.error.trim() !== "" ? body.error.trim() : null;
-        setConnectionStatus(res.status === 422
-          ? (reason ?? "Bitte eine reine HTTPS-Adresse und bei mehreren Blogs den passenden Blog-Schlüssel angeben.")
-          : `Verbinden fehlgeschlagen (HTTP ${res.status})${reason ? `: ${reason}` : "."}`);
-        return;
-      }
-      setInstallUrl(body.fallback_url ?? body.install_url ?? null);
-      if (body.delivered === true || body.connected === true) {
-        toast.success("Website mit der API verbunden.");
-        await loadConnection();
-      } else {
-        // `error` is why the hand-over failed — "HTTP 422: invalid_origin" is
-        // the site's own refusal, which otherwise only its log would show.
-        const why = typeof body.error === "string" && body.error.trim() !== "" ? ` (${body.error.trim()})` : "";
-        setConnectionStatus(`Die Website hat die Verbindung nicht direkt angenommen${why}. Öffnen Sie den Einrichtungslink auf dem Website-Server.`);
-      }
-    } catch {
-      setConnectionStatus("Verbinden fehlgeschlagen (Netzwerkfehler).");
-    } finally {
-      setConnecting(false);
-    }
-  };
+  const connect = () => void pairing.connect(origin, blog.trim() === "" ? {} : { blog: blog.trim() });
 
   const disconnect = async () => {
-    let res: Response;
-    try {
-      res = await api(`/cms/sites/${site.site_key}/connection`, { method: "DELETE" });
-    } catch {
-      // apiFetch rejects when the request never reaches the API; uncaught, the
-      // click did nothing and said nothing.
-      toast.danger("Trennen fehlgeschlagen (Netzwerkfehler).");
-      return;
-    }
-    if (res.ok) {
-      setConnection(null);
-      setInstallUrl(null);
-      toast.success("Verbindung getrennt.");
-    } else {
-      toast.danger(`Trennen fehlgeschlagen (HTTP ${res.status}).`);
-    }
+    setDisconnecting(true);
+    await pairing.disconnect();
+    setDisconnecting(false);
+    setConfirmDisconnect(false);
   };
 
   const rebuildCache = async () => {
-    setCacheStatus("Seiten-Cache wird neu gebaut …");
-    let res: Response;
-    try {
-      res = await api(`/cms/sites/${site.site_key}/cache/rebuild`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ all: true }),
-      });
-    } catch {
-      setCacheStatus(null);
-      toast.danger("Cache-Neubau fehlgeschlagen (Netzwerkfehler).");
-      return;
-    }
-    if (res.ok) {
-      setCacheStatus(null);
-      toast.success("Cache-Neubau für die Website wurde angestoßen.");
-    } else if (res.status === 422) {
-      setCacheStatus("Die gespeicherte Website-Adresse ist ungültig.");
-    } else if (res.status === 503) {
-      setCacheStatus("Die Website ist noch nicht vollständig mit der API verbunden.");
-    } else if (res.status === 502) {
-      setCacheStatus("Die Website ist erreichbar, aber der Cache-Neubau ist fehlgeschlagen. Bitte erneut versuchen.");
-    } else {
-      setCacheStatus(null);
-      toast.danger(`Cache-Neubau fehlgeschlagen (HTTP ${res.status}).`);
-    }
+    setRebuilding(true);
+    await pairing.rebuildCache();
+    setRebuilding(false);
   };
 
   return (
@@ -330,26 +237,31 @@ function SiteCard({ site, blogs }: { site: Site; blogs: BlogCandidate[] }) {
         </label>
       ) : null}
 
-      {loading ? <p><Spinner size="sm" /> Verbindungsstatus wird geladen …</p> : connection ? (
-        <p className="tds-alert tds-alert--success" role="status">Verbunden mit {connection.origin ?? origin}</p>
-      ) : <p className="tds-alert" role="status">Noch nicht mit der API verbunden.</p>}
-      {connectionStatus ? <p className="tds-alert tds-alert--danger" role="alert">{connectionStatus}</p> : null}
-      {installUrl ? <p><a className="btn btn-ghost" href={installUrl}>Einrichtungslink öffnen</a></p> : null}
-      {cacheStatus ? (
-        <p className="tds-alert" role="status">
-          {cacheStatus}
-        </p>
-      ) : null}
+      {pairing.loading ? <p><Spinner size="sm" /> Verbindungsstatus wird geladen …</p> : connection ? (
+        <Alert tone="success">Verbunden mit {connection.origin ?? origin}</Alert>
+      ) : <Alert tone="neutral">Noch nicht mit der API verbunden.</Alert>}
+      <Alert>{pairing.status}</Alert>
+      {pairing.installUrl ? <p><a className="btn btn-ghost" href={pairing.installUrl}>Einrichtungslink öffnen</a></p> : null}
 
       <div className="tds-toolbar">
-        <button className="btn btn-primary" type="button" onClick={connect} disabled={connecting || origin.trim() === "" || (candidateKeys.length > 1 && blog === "")}>
-          {connecting ? <Spinner size="sm" /> : connection ? "Neu verbinden" : "Mit API verbinden"}
+        <button className="btn btn-primary" type="button" onClick={connect} disabled={pairing.connecting || origin.trim() === "" || (candidateKeys.length > 1 && blog === "")}>
+          {pairing.connecting ? <Spinner size="sm" /> : connection ? "Neu verbinden" : "Mit API verbinden"}
         </button>
-        <button className="btn btn-accent" type="button" onClick={rebuildCache}>
+        <button className="btn btn-accent" type="button" onClick={() => void rebuildCache()} disabled={rebuilding} aria-busy={rebuilding}>
+          {rebuilding ? <Spinner size="sm" /> : null}
           Seiten-Cache neu bauen
         </button>
-        {connection ? <button className="btn btn-ghost" type="button" onClick={disconnect}>Verbindung trennen</button> : null}
+        {connection ? <button className="btn btn-ghost" type="button" onClick={() => setConfirmDisconnect(true)}>Verbindung trennen</button> : null}
       </div>
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title="Verbindung trennen?"
+        message={`Die Website „${site.name}" verliert ihren API-Zugang, bis sie neu verbunden wird.`}
+        confirmLabel="Trennen"
+        busy={disconnecting}
+        onConfirm={() => void disconnect()}
+        onCancel={() => setConfirmDisconnect(false)}
+      />
     </section>
   );
 }
